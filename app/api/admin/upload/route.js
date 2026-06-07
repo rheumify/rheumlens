@@ -99,6 +99,7 @@ export async function POST(request) {
   const files = form.getAll('files').filter((f) => f && typeof f.arrayBuffer === 'function');
   if (!files.length) return Response.json({ error: 'No files received.' }, { status: 400 });
   const infoByRef = parseInfoBlocks(form.get('info') || '');
+  const notes = (form.get('notes') || '').trim();
 
   const results = [];
   for (const file of files) {
@@ -109,20 +110,24 @@ export async function POST(request) {
       let created = false;
 
       if (!recId) {
-        if (!block) { results.push({ file: file.name, qid: key, status: 'no-matching-question' }); continue; }
+        if (!block && !notes) { results.push({ file: file.name, qid: key, status: 'no-matching-question' }); continue; }
         recId = await createRecord({
           'Question ID': key,
           'ACR Ref #': key,
-          'Question Title': `[NEW] ${block.title || key}`,
-          'Category': mapCategory(block.category),
-          'Source Caption': block.description,
+          'Question Title': `[NEW] ${block?.title || key}`,
+          'Category': mapCategory(block?.category),
+          'Source Caption': block?.description || '',
+          ...(notes ? { 'Notes': notes } : {}),
           'Credit': 'Copyright 2026 ACR',
           'Published': false,
         });
         created = true;
-      } else if (block) {
-        // existing record: just stash the raw caption (don't overwrite authored content)
-        await patchFields(recId, { 'Source Caption': block.description });
+      } else {
+        // existing record: stash raw caption + comments without overwriting authored content
+        const patch = {};
+        if (block) patch['Source Caption'] = block.description;
+        if (notes) patch['Notes'] = notes;
+        if (Object.keys(patch).length) await patchFields(recId, patch);
       }
 
       const buf = Buffer.from(await file.arrayBuffer());
