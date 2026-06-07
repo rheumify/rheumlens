@@ -32,6 +32,7 @@ async function gatherFiles(dataTransfer) {
 export default function AdminUpload() {
   const [secret, setSecret] = useState('');
   const [files, setFiles] = useState([]);
+  const [info, setInfo] = useState('');
   const [busy, setBusy] = useState(false);
   const [results, setResults] = useState(null);
   const [error, setError] = useState(null);
@@ -57,6 +58,7 @@ export default function AdminUpload() {
     try {
       const fd = new FormData();
       for (const f of files) fd.append('files', f);
+      if (info.trim()) fd.append('info', info);
       const res = await fetch('/api/admin/upload', { method: 'POST', headers: { 'x-admin-secret': secret }, body: fd });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `Upload failed (${res.status})`);
@@ -69,8 +71,8 @@ export default function AdminUpload() {
     <div style={{ maxWidth: 620 }}>
       <h1>Image upload</h1>
       <p className="muted">
-        Images named by Question ID (e.g. <code>RL-001.jpg</code> or <code>RL-001_anything.jpg</code>) are
-        hosted and attached to their matching question automatically.
+        Name files by their ACR reference number (e.g. <code>99-14-0055.jpg</code>) or by Question ID
+        (<code>RL-001.jpg</code>). Paste the ACR info below and a new draft question is created for each new image.
       </p>
 
       <div className="card" style={{ display: 'grid', gap: 14 }}>
@@ -107,6 +109,17 @@ export default function AdminUpload() {
           </div>
         )}
 
+        <label>
+          <div style={{ fontWeight: 600, marginBottom: 6 }}>ACR image info (optional)</div>
+          <div className="muted" style={{ fontSize: '.85rem', marginBottom: 6 }}>
+            Paste one or more ACR blocks (Category / Reference # / Image Title / Description). Each new
+            Reference # becomes a draft question with the image attached.
+          </div>
+          <textarea value={info} onChange={(e) => setInfo(e.target.value)} rows={7}
+            placeholder={'Category\tCrystal Associated Arthropathies\nReference #\t99-14-0055\nImage Title\t...\nDescription\t...'}
+            style={{ width: '100%', padding: 10, borderRadius: 8, border: '1.5px solid var(--slate-300)', fontFamily: 'inherit', fontSize: '.9rem' }} />
+        </label>
+
         <button className="btn" disabled={busy || !files.length || !secret} onClick={upload}>
           {busy ? 'Uploading…' : `Upload ${files.length || ''} image(s)`}
         </button>
@@ -116,11 +129,11 @@ export default function AdminUpload() {
 
       {results && (
         <div className="card" style={{ marginTop: 14 }}>
-          <strong>{results.attached} of {results.total} attached</strong>
+          <strong>{results.attached} of {results.total} attached{results.created ? ` · ${results.created} new draft(s)` : ''}</strong>
           <ul>
             {results.results.map((r, i) => (
               <li key={i}>
-                {r.file} → <b>{r.status}</b>{r.qid ? ` (${r.qid})` : ''}{r.error ? `: ${r.error}` : ''}
+                {r.file} → <b>{r.status}</b>{r.created ? ' (new)' : ''}{r.qid ? ` (${r.qid})` : ''}{r.error ? `: ${r.error}` : ''}
               </li>
             ))}
           </ul>
