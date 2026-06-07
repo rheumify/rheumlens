@@ -15,6 +15,7 @@ export default function QuestionSession({ mode = 'random', category = null, styl
   const [revealed, setRevealed] = useState(false);
   const [fav, setFav] = useState(false);
   const [zoom, setZoom] = useState(false);
+  const [zNatural, setZNatural] = useState(false);
 
   useEffect(() => {
     const url = new URL('/api/questions', window.location.origin);
@@ -60,6 +61,7 @@ export default function QuestionSession({ mode = 'random', category = null, styl
     setPicked(null);
     setRevealed(false);
     setZoom(false);
+    setZNatural(false);
     if (idx + 1 < questions.length) setIdx(idx + 1);
     else setIdx(questions.length);
   }
@@ -95,7 +97,7 @@ export default function QuestionSession({ mode = 'random', category = null, styl
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={q.imageUrl} alt={q.imageAlt || 'Clinical image'} />
       </div>
-      <div className="credit">{q.credit}</div>
+      <div className="credit">{q.credit} · tap image to zoom</div>
     </div>
   ) : (
     <div className="q-image-missing">
@@ -104,14 +106,26 @@ export default function QuestionSession({ mode = 'random', category = null, styl
     </div>
   );
 
+  const closeZoom = () => { setZoom(false); setZNatural(false); };
   const Zoom = zoom && q.imageUrl && (
-    <div
-      onClick={() => setZoom(false)}
-      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.9)', zIndex: 50,
-        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, cursor: 'zoom-out' }}
-    >
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={q.imageUrl} alt={q.imageAlt || ''} style={{ maxWidth: '100%', maxHeight: '100%' }} />
+    <div onClick={closeZoom}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.92)', zIndex: 50, overflow: 'auto' }}>
+      <button onClick={(e) => { e.stopPropagation(); closeZoom(); }}
+        style={{ position: 'fixed', top: 12, right: 14, zIndex: 52, background: 'rgba(255,255,255,.16)', color: '#fff',
+          border: 'none', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: '.95rem' }}>✕ Close</button>
+      <div style={{ minHeight: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={q.imageUrl} alt={q.imageAlt || ''}
+          onClick={(e) => { e.stopPropagation(); setZNatural((n) => !n); }}
+          style={{ display: 'block',
+            maxWidth: zNatural ? 'none' : '100%',
+            maxHeight: zNatural ? 'none' : '92vh',
+            cursor: zNatural ? 'zoom-out' : 'zoom-in' }} />
+      </div>
+      <div style={{ position: 'fixed', bottom: 10, left: 0, right: 0, textAlign: 'center', color: 'rgba(255,255,255,.7)',
+        fontSize: '.78rem', pointerEvents: 'none' }}>
+        Tap image to {zNatural ? 'fit to screen' : 'zoom to full size'} · scroll / drag to pan · tap background to close
+      </div>
     </div>
   );
 
