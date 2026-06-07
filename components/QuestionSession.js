@@ -6,11 +6,13 @@ import { recordAnswer, toggleFavorite, isFavorite, getFavorites, getMissedIds } 
 const PREVIEW = process.env.NEXT_PUBLIC_SHOW_DRAFTS === 'true';
 const LETTERS = ['A', 'B', 'C', 'D'];
 
-export default function QuestionSession({ mode = 'random', category = null }) {
+export default function QuestionSession({ mode = 'random', category = null, style = 'quiz' }) {
+  const flip = style === 'flip';
   const [questions, setQuestions] = useState(null);
   const [error, setError] = useState(null);
   const [idx, setIdx] = useState(0);
   const [picked, setPicked] = useState(null);
+  const [revealed, setRevealed] = useState(false);
   const [fav, setFav] = useState(false);
   const [zoom, setZoom] = useState(false);
 
@@ -56,52 +58,95 @@ export default function QuestionSession({ mode = 'random', category = null }) {
   }
   function next() {
     setPicked(null);
+    setRevealed(false);
     setZoom(false);
     if (idx + 1 < questions.length) setIdx(idx + 1);
-    else setIdx(questions.length); // finished
+    else setIdx(questions.length);
   }
 
   if (idx >= questions.length) {
     return (
       <div className="card center">
-        <h2>Set complete 🎉</h2>
-        <p className="muted">You worked through {questions.length} question{questions.length > 1 ? 's' : ''}.</p>
+        <h2>{flip ? 'Done flipping 🎉' : 'Set complete 🎉'}</h2>
+        <p className="muted">You went through {questions.length} image{questions.length > 1 ? 's' : ''}.</p>
         <div className="btn-row" style={{ justifyContent: 'center' }}>
-          <button className="btn" onClick={() => { setIdx(0); setPicked(null); }}>Restart</button>
+          <button className="btn" onClick={() => { setIdx(0); setPicked(null); setRevealed(false); }}>Restart</button>
           <Link href="/study" className="btn secondary">Choose another set</Link>
         </div>
       </div>
     );
   }
 
-  const correct = picked && picked === q.correct;
+  const ProgressHeader = (
+    <div>
+      <div className="progress-top">
+        <span>{flip ? 'Image' : 'Question'} {idx + 1} of {questions.length}</span>
+        <button className="fav" title="Favorite" onClick={() => setFav(toggleFavorite(q.questionId))}>
+          {fav ? '★' : '☆'}
+        </button>
+      </div>
+      <div className="bar"><div style={{ width: `${(idx / questions.length) * 100}%` }} /></div>
+    </div>
+  );
 
+  const Image = q.imageUrl ? (
+    <div>
+      <div className="q-image" onClick={() => setZoom(true)}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={q.imageUrl} alt={q.imageAlt || 'Clinical image'} />
+      </div>
+      <div className="credit">{q.credit}</div>
+    </div>
+  ) : (
+    <div className="q-image-missing">
+      Image not yet attached for this question.<br />
+      <span className="muted">(Add it via the upload page to display it here.)</span>
+    </div>
+  );
+
+  const Zoom = zoom && q.imageUrl && (
+    <div
+      onClick={() => setZoom(false)}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.9)', zIndex: 50,
+        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, cursor: 'zoom-out' }}
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={q.imageUrl} alt={q.imageAlt || ''} style={{ maxWidth: '100%', maxHeight: '100%' }} />
+    </div>
+  );
+
+  // ---------- FLIP MODE: image -> reveal finding -> next ----------
+  if (flip) {
+    return (
+      <div className="q-wrap">
+        {ProgressHeader}
+        {Image}
+        {revealed ? (
+          <div className="explain correct">
+            <h4>{q.diagnosis || q.title.replace(/^\[DRAFT\]\s*/, '')}</h4>
+            {q.teachingPoint && <div className="teach"><strong>What to see:</strong> {q.teachingPoint}</div>}
+            <div className="chips">
+              {q.category && <span className="chip">{q.category}</span>}
+              {q.imageType && <span className="chip">{q.imageType}</span>}
+            </div>
+            <div className="btn-row" style={{ marginTop: 16 }}>
+              <button className="btn" onClick={next}>{idx + 1 < questions.length ? 'Next image →' : 'Finish'}</button>
+            </div>
+          </div>
+        ) : (
+          <button className="btn" onClick={() => setRevealed(true)}>Reveal finding</button>
+        )}
+        {Zoom}
+      </div>
+    );
+  }
+
+  // ---------- QUIZ MODE ----------
+  const correct = picked && picked === q.correct;
   return (
     <div className="q-wrap">
-      <div>
-        <div className="progress-top">
-          <span>Question {idx + 1} of {questions.length}</span>
-          <button className="fav" title="Favorite" onClick={() => setFav(toggleFavorite(q.questionId))}>
-            {fav ? '★' : '☆'}
-          </button>
-        </div>
-        <div className="bar"><div style={{ width: `${(idx / questions.length) * 100}%` }} /></div>
-      </div>
-
-      {q.imageUrl ? (
-        <div>
-          <div className="q-image" onClick={() => setZoom(true)}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={q.imageUrl} alt={q.imageAlt || 'Clinical image'} />
-          </div>
-          <div className="credit">{q.credit}</div>
-        </div>
-      ) : (
-        <div className="q-image-missing">
-          Image not yet attached for this question.<br />
-          <span className="muted">(Add it in Airtable to display it here.)</span>
-        </div>
-      )}
+      {ProgressHeader}
+      {Image}
 
       {q.stem && <p className="stem">{q.stem}</p>}
       {q.leadIn && <p className="lead-in">{q.leadIn}</p>}
@@ -143,16 +188,7 @@ export default function QuestionSession({ mode = 'random', category = null }) {
         </div>
       )}
 
-      {zoom && q.imageUrl && (
-        <div
-          onClick={() => setZoom(false)}
-          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.9)', zIndex: 50,
-            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, cursor: 'zoom-out' }}
-        >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={q.imageUrl} alt={q.imageAlt || ''} style={{ maxWidth: '100%', maxHeight: '100%' }} />
-        </div>
-      )}
+      {Zoom}
     </div>
   );
 }
