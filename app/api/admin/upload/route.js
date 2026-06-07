@@ -7,20 +7,24 @@ const BASE = process.env.AIRTABLE_BASE_ID;
 const KEY = process.env.AIRTABLE_API_KEY;
 const TABLE = process.env.AIRTABLE_QUESTIONS_TABLE || 'Image Questions';
 
-// "RL-001_gout_pelvis.jpg" -> "RL-001" ; "RL-001.jpg" -> "RL-001"
-function questionIdFromName(name) {
+// "RL-001_gout_pelvis.jpg" -> "RL-001" ; "RL-001.jpg" -> "RL-001" ; "99-14-0055.tif" -> "99-14-0055"
+function keyFromName(name) {
   const base = name.replace(/\.[^.]+$/, '');
   return base.split('_')[0].trim();
 }
 
-async function findRecordId(qid) {
-  const url = new URL(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(TABLE)}`);
-  url.searchParams.set('filterByFormula', `{Question ID} = '${qid}'`);
-  url.searchParams.set('maxRecords', '1');
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${KEY}` }, cache: 'no-store' });
-  if (!res.ok) throw new Error(`Airtable lookup ${res.status}: ${await res.text()}`);
-  const data = await res.json();
-  return data.records?.[0]?.id || null;
+// Match by Question ID first, then by ACR Ref # (so raw ACR-numbered files attach too).
+async function findRecordId(key) {
+  for (const field of ['Question ID', 'ACR Ref #']) {
+    const url = new URL(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(TABLE)}`);
+    url.searchParams.set('filterByFormula', `{${field}} = '${key}'`);
+    url.searchParams.set('maxRecords', '1');
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${KEY}` }, cache: 'no-store' });
+    if (!res.ok) continue;
+    const data = await res.json();
+    if (data.records?.[0]) return data.records[0].id;
+  }
+  return null;
 }
 
 async function attach(recId, fields) {
@@ -50,15 +54,15 @@ export async function POST(request) {
   const results = [];
   for (const file of files) {
     try {
-      const qid = questionIdFromName(file.name);
-      const recId = await findRecordId(qid);
-      if (!recId) { results.push({ file: file.name, qid, status: 'no-matching-question' }); continue; }
+      const key = keyFromName(file.name);
+      const recId = await findRecordId(key);
+      if (!recId) { results.push({ file: file.name, qid: key, status: 'no-matching-question' }); continue; }
       const buf = Buffer.from(await file.arrayBuffer());
-      const blob = await put(`rheumlens/${qid}.jpg`, buf, {
+      const blob = await put(`rheumlens/${key}.jpg`, buf, {
         access: 'public', addRandomSuffix: false, contentType: file.type || 'image/jpeg',
       });
       await attach(recId, { Image: [{ url: blob.url }], 'Hosted URL': blob.url });
-      results.push({ file: file.name, qid, status: 'attached', url: blob.url });
+      results.push({ file: file.name, qid: key, status: 'attached', url: blob.url });
     } catch (e) {
       results.push({ file: file.name, status: 'error', error: e.message });
     }
