@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
 
-const IMG_RE = /\.(jpe?g|png|gif|webp)$/i;
+const IMG_RE = /\.(jpe?g|png|gif|webp|tiff?)$/i;
 
 // Collect image files from a drop, walking into any dropped folders.
 async function gatherFiles(dataTransfer) {
@@ -51,7 +51,7 @@ export default function AdminUpload() {
     setDragging(false);
     const dropped = await gatherFiles(e.dataTransfer);
     if (dropped.length) mergeFiles(dropped);
-    else setError('No image files found in what you dropped (jpg/png/gif/webp).');
+    else setError('No image files found in what you dropped (jpg/png/gif/webp/tif).');
   }
 
   async function upload() {
@@ -75,7 +75,7 @@ export default function AdminUpload() {
     <div style={{ maxWidth: 620 }}>
       <h1>Image upload</h1>
       <p className="muted">
-        Name files by their ACR reference number (e.g. <code>99-14-0055.jpg</code>) or by Question ID
+        Name files by their ACR reference number (e.g. <code>99-14-0055.tif</code>) or by Question ID
         (<code>RL-001.jpg</code>). Paste the ACR info below and a new draft question is created for each new image.
       </p>
 
@@ -98,10 +98,10 @@ export default function AdminUpload() {
           }}
         >
           <div style={{ fontWeight: 600, marginBottom: 4 }}>Drag images or a folder here</div>
-          <div className="muted" style={{ fontSize: '.9rem', marginBottom: 10 }}>jpg, png, gif, webp · folders are walked automatically</div>
+          <div className="muted" style={{ fontSize: '.9rem', marginBottom: 10 }}>jpg, png, gif, webp, tif · TIFs are auto-converted · folders are walked</div>
           <label className="btn secondary" style={{ cursor: 'pointer' }}>
             …or choose files
-            <input type="file" accept="image/*" multiple style={{ display: 'none' }}
+            <input type="file" accept="image/*,.tif,.tiff" multiple style={{ display: 'none' }}
               onChange={(e) => mergeFiles(Array.from(e.target.files).filter((f) => IMG_RE.test(f.name)))} />
           </label>
         </div>
