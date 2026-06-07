@@ -65,6 +65,8 @@ export default function AdminUpload() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `Upload failed (${res.status})`);
       setResults(data);
+      // Clear the inputs on success (the results summary stays visible above).
+      setFiles([]); setInfo(''); setNotes('');
     } catch (e) { setError(e.message); }
     finally { setBusy(false); }
   }
