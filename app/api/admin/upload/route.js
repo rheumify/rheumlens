@@ -1,11 +1,11 @@
-import { put } from '@vercel/blob';
-
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const BASE = process.env.AIRTABLE_BASE_ID;
 const KEY = process.env.AIRTABLE_API_KEY;
 const TABLE = process.env.AIRTABLE_QUESTIONS_TABLE || 'Image Questions';
+// Image (attachment) field id on the Image Questions table.
+const IMAGE_FIELD_ID = process.env.AIRTABLE_IMAGE_FIELD_ID || 'fldjxwnR3yTcKTloE';
 
 // "RL-001_gout_pelvis.jpg" -> "RL-001" ; "RL-001.jpg" -> "RL-001" ; "99-14-0055.tif" -> "99-14-0055"
 function keyFromName(name) {
@@ -27,13 +27,23 @@ async function findRecordId(key) {
   return null;
 }
 
-async function attach(recId, fields) {
-  const res = await fetch(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(TABLE)}/${recId}`, {
+// Clear the Image field so re-uploads replace rather than append.
+async function clearImage(recId) {
+  await fetch(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(TABLE)}/${recId}`, {
     method: 'PATCH',
     headers: { Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ fields }),
+    body: JSON.stringify({ fields: { Image: [] } }),
   });
-  if (!res.ok) throw new Error(`Airtable PATCH ${res.status}: ${await res.text()}`);
+}
+
+// Upload the file bytes straight into Airtable's attachment field (Airtable hosts + serves it).
+async function uploadAttachment(recId, file, buf) {
+  const res = await fetch(`https://content.airtable.com/v0/${BASE}/${recId}/${IMAGE_FIELD_ID}/uploadAttachment`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ contentType: file.type || 'image/jpeg', filename: file.name, file: buf.toString('base64') }),
+  });
+  if (!res.ok) throw new Error(`Airtable upload ${res.status}: ${await res.text()}`);
 }
 
 export async function POST(request) {
@@ -58,11 +68,9 @@ export async function POST(request) {
       const recId = await findRecordId(key);
       if (!recId) { results.push({ file: file.name, qid: key, status: 'no-matching-question' }); continue; }
       const buf = Buffer.from(await file.arrayBuffer());
-      const blob = await put(`rheumlens/${key}.jpg`, buf, {
-        access: 'public', addRandomSuffix: false, contentType: file.type || 'image/jpeg',
-      });
-      await attach(recId, { Image: [{ url: blob.url }], 'Hosted URL': blob.url });
-      results.push({ file: file.name, qid: key, status: 'attached', url: blob.url });
+      await clearImage(recId);
+      await uploadAttachment(recId, file, buf);
+      results.push({ file: file.name, qid: key, status: 'attached' });
     } catch (e) {
       results.push({ file: file.name, status: 'error', error: e.message });
     }
