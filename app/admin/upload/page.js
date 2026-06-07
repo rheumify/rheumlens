@@ -2,6 +2,8 @@
 import { useState } from 'react';
 
 const IMG_RE = /\.(jpe?g|png|gif|webp|tiff?)$/i;
+const MAX_DIM = 2200;        // longest side after downscale
+const JPEG_QUALITY = 0.85;
 
 // Collect image files from a drop, walking into any dropped folders.
 async function gatherFiles(dataTransfer) {
@@ -29,12 +31,73 @@ async function gatherFiles(dataTransfer) {
   return Array.from(dataTransfer.files || []).filter((f) => IMG_RE.test(f.name));
 }
 
+// Draw a source (HTMLImageElement or {data,width,height}) onto a downscaled canvas.
+function drawDownscaled(srcW, srcH, drawFn) {
+  const scale = Math.min(1, MAX_DIM / Math.max(srcW, srcH));
+  const w = Math.max(1, Math.round(srcW * scale));
+  const h = Math.max(1, Math.round(srcH * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, w, h);
+  drawFn(ctx, w, h);
+  return canvas;
+}
+
+function canvasToJpegFile(canvas, name) {
+  return new Promise((resolve) => {
+    canvas.toBlob((blob) => {
+      const jpgName = name.replace(/\.[^.]+$/, '') + '.jpg';
+      resolve(new File([blob], jpgName, { type: 'image/jpeg' }));
+    }, 'image/jpeg', JPEG_QUALITY);
+  });
+}
+
+// Convert one image File to a downscaled JPEG File (handles TIF via UTIF).
+async function shrinkToJpeg(file) {
+  const isTiff = /\.tiff?$/i.test(file.name) || (file.type || '').includes('tiff');
+  if (isTiff) {
+    const mod = await import('utif');
+    const UTIF = mod.default || mod;
+    const buf = await file.arrayBuffer();
+    const ifds = UTIF.decode(buf);
+    UTIF.decodeImage(buf, ifds[0]);
+    const rgba = UTIF.toRGBA8(ifds[0]); // Uint8Array RGBA
+    const w = ifds[0].width, h = ifds[0].height;
+    const tmp = document.createElement('canvas');
+    tmp.width = w; tmp.height = h;
+    const tctx = tmp.getContext('2d');
+    const imgData = tctx.createImageData(w, h);
+    imgData.data.set(rgba);
+    tctx.putImageData(imgData, 0, 0);
+    const canvas = drawDownscaled(w, h, (ctx, dw, dh) => ctx.drawImage(tmp, 0, 0, dw, dh));
+    return canvasToJpegFile(canvas, file.name);
+  }
+  // jpg/png/gif/webp -> decode via Image, downscale, re-encode JPEG
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((res, rej) => {
+      const i = new window.Image();
+      i.onload = () => res(i);
+      i.onerror = () => rej(new Error('Could not read ' + file.name));
+      i.src = url;
+    });
+    const canvas = drawDownscaled(img.naturalWidth, img.naturalHeight,
+      (ctx, dw, dh) => ctx.drawImage(img, 0, 0, dw, dh));
+    return canvasToJpegFile(canvas, file.name);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 export default function AdminUpload() {
   const [secret, setSecret] = useState('');
   const [files, setFiles] = useState([]);
   const [info, setInfo] = useState('');
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
+  const [stage, setStage] = useState('');
   const [results, setResults] = useState(null);
   const [error, setError] = useState(null);
   const [dragging, setDragging] = useState(false);
@@ -57,18 +120,36 @@ export default function AdminUpload() {
   async function upload() {
     setBusy(true); setError(null); setResults(null);
     try {
+      // Shrink every image in the browser first so the request stays small.
+      setStage('Optimizing images…');
+      const prepared = [];
+      for (const f of files) {
+        try { prepared.push(await shrinkToJpeg(f)); }
+        catch (e) { prepared.push(f); } // fall back to original if decode fails
+      }
+      setStage('Uploading…');
       const fd = new FormData();
-      for (const f of files) fd.append('files', f);
+      for (const f of prepared) fd.append('files', f);
       if (info.trim()) fd.append('info', info);
       if (notes.trim()) fd.append('notes', notes);
       const res = await fetch('/api/admin/upload', { method: 'POST', headers: { 'x-admin-secret': secret }, body: fd });
-      const data = await res.json();
+
+      // Parse defensively: a 413/HTML error page is NOT JSON.
+      const raw = await res.text();
+      let data;
+      try { data = JSON.parse(raw); }
+      catch {
+        if (res.status === 413 || /request entity too large/i.test(raw)) {
+          throw new Error('An image was still too large after optimizing. Try one image at a time, or a smaller source file.');
+        }
+        throw new Error(`Upload failed (${res.status}): ${raw.slice(0, 120)}`);
+      }
       if (!res.ok) throw new Error(data.error || `Upload failed (${res.status})`);
       setResults(data);
       // Clear the inputs on success (the results summary stays visible above).
       setFiles([]); setInfo(''); setNotes('');
     } catch (e) { setError(e.message); }
-    finally { setBusy(false); }
+    finally { setBusy(false); setStage(''); }
   }
 
   const taStyle = { width: '100%', padding: 10, borderRadius: 8, border: '1.5px solid var(--slate-300)', fontFamily: 'inherit', fontSize: '.9rem' };
@@ -100,7 +181,7 @@ export default function AdminUpload() {
           }}
         >
           <div style={{ fontWeight: 600, marginBottom: 4 }}>Drag images or a folder here</div>
-          <div className="muted" style={{ fontSize: '.9rem', marginBottom: 10 }}>jpg, png, gif, webp, tif · TIFs are auto-converted · folders are walked</div>
+          <div className="muted" style={{ fontSize: '.9rem', marginBottom: 10 }}>jpg, png, gif, webp, tif · TIFs are auto-converted · large images are auto-shrunk · folders are walked</div>
           <label className="btn secondary" style={{ cursor: 'pointer' }}>
             …or choose files
             <input type="file" accept="image/*,.tif,.tiff" multiple style={{ display: 'none' }}
@@ -138,7 +219,7 @@ export default function AdminUpload() {
         </label>
 
         <button className="btn" disabled={busy || !files.length || !secret} onClick={upload}>
-          {busy ? 'Uploading…' : `Upload ${files.length || ''} image(s)`}
+          {busy ? (stage || 'Uploading…') : `Upload ${files.length || ''} image(s)`}
         </button>
       </div>
 
