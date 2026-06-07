@@ -1,3 +1,5 @@
+import sharp from 'sharp';
+
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
@@ -75,11 +77,11 @@ async function patchFields(recId, fields) {
   if (!res.ok) throw new Error(`Airtable patch ${res.status}: ${await res.text()}`);
 }
 
-async function uploadAttachment(recId, file, buf) {
+async function uploadAttachment(recId, { buffer, contentType, filename }) {
   const res = await fetch(`https://content.airtable.com/v0/${BASE}/${recId}/${IMAGE_FIELD_ID}/uploadAttachment`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ contentType: file.type || 'image/jpeg', filename: file.name, file: buf.toString('base64') }),
+    body: JSON.stringify({ contentType, filename, file: buffer.toString('base64') }),
   });
   if (!res.ok) throw new Error(`Airtable upload ${res.status}: ${await res.text()}`);
 }
@@ -123,16 +125,24 @@ export async function POST(request) {
         });
         created = true;
       } else {
-        // existing record: stash raw caption + comments without overwriting authored content
         const patch = {};
         if (block) patch['Source Caption'] = block.description;
         if (notes) patch['Notes'] = notes;
         if (Object.keys(patch).length) await patchFields(recId, patch);
       }
 
-      const buf = Buffer.from(await file.arrayBuffer());
+      // Convert TIF (which browsers can't display) to JPG before attaching.
+      let buffer = Buffer.from(await file.arrayBuffer());
+      let contentType = file.type || 'image/jpeg';
+      let filename = file.name;
+      if (/\.tiff?$/i.test(file.name) || contentType.includes('tiff')) {
+        buffer = await sharp(buffer).jpeg({ quality: 88 }).toBuffer();
+        contentType = 'image/jpeg';
+        filename = file.name.replace(/\.[^.]+$/, '.jpg');
+      }
+
       await patchFields(recId, { Image: [] }); // clear so re-uploads replace
-      await uploadAttachment(recId, file, buf);
+      await uploadAttachment(recId, { buffer, contentType, filename });
       results.push({ file: file.name, qid: key, status: 'attached', created });
     } catch (e) {
       results.push({ file: file.name, status: 'error', error: e.message });
