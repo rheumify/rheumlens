@@ -4,16 +4,45 @@ export const dynamic = 'force-dynamic';
 const BASE = process.env.AIRTABLE_BASE_ID;
 const KEY = process.env.AIRTABLE_API_KEY;
 const TABLE = process.env.AIRTABLE_QUESTIONS_TABLE || 'Image Questions';
-// Image (attachment) field id on the Image Questions table.
 const IMAGE_FIELD_ID = process.env.AIRTABLE_IMAGE_FIELD_ID || 'fldjxwnR3yTcKTloE';
 
-// "RL-001_gout_pelvis.jpg" -> "RL-001" ; "RL-001.jpg" -> "RL-001" ; "99-14-0055.tif" -> "99-14-0055"
 function keyFromName(name) {
   const base = name.replace(/\.[^.]+$/, '');
   return base.split('_')[0].trim();
 }
 
-// Match by Question ID first, then by ACR Ref # (so raw ACR-numbered files attach too).
+// Parse pasted ACR info into { refNumber: { category, title, description } }.
+function parseInfoBlocks(text) {
+  const byRef = {};
+  if (!text || !text.trim()) return byRef;
+  const norm = text.replace(/\r/g, '').replace(/\t/g, ': ');
+  const blocks = norm.split(/\n(?=\s*Category[:\s])/i);
+  for (const b of blocks) {
+    const ref = (b.match(/Reference\s*#\s*:?\s*([^\s]+)/i) || [])[1];
+    if (!ref) continue;
+    byRef[ref.trim()] = {
+      category: (b.match(/Category\s*:?\s*(.+)/i) || [])[1]?.trim() || '',
+      title: (b.match(/Image\s*Title\s*:?\s*(.+)/i) || [])[1]?.trim() || '',
+      description: (b.match(/Description\s*:?\s*([\s\S]+)/i) || [])[1]?.trim() || '',
+    };
+  }
+  return byRef;
+}
+
+function mapCategory(acr) {
+  const s = (acr || '').toLowerCase();
+  if (s.includes('crystal')) return 'Crystal';
+  if (s.includes('rheumatoid')) return 'RA';
+  if (s.includes('lupus')) return 'SLE';
+  if (s.includes('vasculit')) return 'Vasculitis';
+  if (s.includes('myositis') || s.includes('myopath')) return 'Myositis';
+  if (s.includes('scleros') || s.includes('scleroderma')) return 'Scleroderma';
+  if (s.includes('sjogren') || s.includes('sjögren')) return 'Sjogrens';
+  if (s.includes('spondyl')) return 'Spondyloarthritis';
+  if (s.includes('osteoarthritis')) return 'Osteoarthritis';
+  return 'Other';
+}
+
 async function findRecordId(key) {
   for (const field of ['Question ID', 'ACR Ref #']) {
     const url = new URL(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(TABLE)}`);
@@ -27,16 +56,25 @@ async function findRecordId(key) {
   return null;
 }
 
-// Clear the Image field so re-uploads replace rather than append.
-async function clearImage(recId) {
-  await fetch(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(TABLE)}/${recId}`, {
-    method: 'PATCH',
+async function createRecord(fields) {
+  const res = await fetch(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(TABLE)}`, {
+    method: 'POST',
     headers: { Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ fields: { Image: [] } }),
+    body: JSON.stringify({ fields }),
   });
+  if (!res.ok) throw new Error(`Airtable create ${res.status}: ${await res.text()}`);
+  return (await res.json()).id;
 }
 
-// Upload the file bytes straight into Airtable's attachment field (Airtable hosts + serves it).
+async function patchFields(recId, fields) {
+  const res = await fetch(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(TABLE)}/${recId}`, {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fields }),
+  });
+  if (!res.ok) throw new Error(`Airtable patch ${res.status}: ${await res.text()}`);
+}
+
 async function uploadAttachment(recId, file, buf) {
   const res = await fetch(`https://content.airtable.com/v0/${BASE}/${recId}/${IMAGE_FIELD_ID}/uploadAttachment`, {
     method: 'POST',
@@ -60,21 +98,42 @@ export async function POST(request) {
 
   const files = form.getAll('files').filter((f) => f && typeof f.arrayBuffer === 'function');
   if (!files.length) return Response.json({ error: 'No files received.' }, { status: 400 });
+  const infoByRef = parseInfoBlocks(form.get('info') || '');
 
   const results = [];
   for (const file of files) {
     try {
       const key = keyFromName(file.name);
-      const recId = await findRecordId(key);
-      if (!recId) { results.push({ file: file.name, qid: key, status: 'no-matching-question' }); continue; }
+      const block = infoByRef[key];
+      let recId = await findRecordId(key);
+      let created = false;
+
+      if (!recId) {
+        if (!block) { results.push({ file: file.name, qid: key, status: 'no-matching-question' }); continue; }
+        recId = await createRecord({
+          'Question ID': key,
+          'ACR Ref #': key,
+          'Question Title': `[NEW] ${block.title || key}`,
+          'Category': mapCategory(block.category),
+          'Source Caption': block.description,
+          'Credit': 'Copyright 2026 ACR',
+          'Published': false,
+        });
+        created = true;
+      } else if (block) {
+        // existing record: just stash the raw caption (don't overwrite authored content)
+        await patchFields(recId, { 'Source Caption': block.description });
+      }
+
       const buf = Buffer.from(await file.arrayBuffer());
-      await clearImage(recId);
+      await patchFields(recId, { Image: [] }); // clear so re-uploads replace
       await uploadAttachment(recId, file, buf);
-      results.push({ file: file.name, qid: key, status: 'attached' });
+      results.push({ file: file.name, qid: key, status: 'attached', created });
     } catch (e) {
       results.push({ file: file.name, status: 'error', error: e.message });
     }
   }
   const attached = results.filter((r) => r.status === 'attached').length;
-  return Response.json({ attached, total: files.length, results });
+  const createdCount = results.filter((r) => r.created).length;
+  return Response.json({ attached, created: createdCount, total: files.length, results });
 }
