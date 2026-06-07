@@ -33,6 +33,7 @@ export default function AdminUpload() {
   const [secret, setSecret] = useState('');
   const [files, setFiles] = useState([]);
   const [info, setInfo] = useState('');
+  const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
   const [results, setResults] = useState(null);
   const [error, setError] = useState(null);
@@ -59,6 +60,7 @@ export default function AdminUpload() {
       const fd = new FormData();
       for (const f of files) fd.append('files', f);
       if (info.trim()) fd.append('info', info);
+      if (notes.trim()) fd.append('notes', notes);
       const res = await fetch('/api/admin/upload', { method: 'POST', headers: { 'x-admin-secret': secret }, body: fd });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `Upload failed (${res.status})`);
@@ -66,6 +68,8 @@ export default function AdminUpload() {
     } catch (e) { setError(e.message); }
     finally { setBusy(false); }
   }
+
+  const taStyle = { width: '100%', padding: 10, borderRadius: 8, border: '1.5px solid var(--slate-300)', fontFamily: 'inherit', fontSize: '.9rem' };
 
   return (
     <div style={{ maxWidth: 620 }}>
@@ -117,7 +121,18 @@ export default function AdminUpload() {
           </div>
           <textarea value={info} onChange={(e) => setInfo(e.target.value)} rows={7}
             placeholder={'Category\tCrystal Associated Arthropathies\nReference #\t99-14-0055\nImage Title\t...\nDescription\t...'}
-            style={{ width: '100%', padding: 10, borderRadius: 8, border: '1.5px solid var(--slate-300)', fontFamily: 'inherit', fontSize: '.9rem' }} />
+            style={taStyle} />
+        </label>
+
+        <label>
+          <div style={{ fontWeight: 600, marginBottom: 6 }}>Comments / notes (optional)</div>
+          <div className="muted" style={{ fontSize: '.85rem', marginBottom: 6 }}>
+            Anything specific about the image — what to emphasize, how to frame the question, gotchas.
+            Saved to the record(s) in this upload for Claude to use when writing the question.
+          </div>
+          <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={4}
+            placeholder="e.g. focus on the double-contour sign; or: this is a tough one, make it Level 3"
+            style={taStyle} />
         </label>
 
         <button className="btn" disabled={busy || !files.length || !secret} onClick={upload}>
