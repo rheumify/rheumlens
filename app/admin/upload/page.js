@@ -1,12 +1,56 @@
 'use client';
 import { useState } from 'react';
 
+const IMG_RE = /\.(jpe?g|png|gif|webp)$/i;
+
+// Collect image files from a drop, walking into any dropped folders.
+async function gatherFiles(dataTransfer) {
+  const items = dataTransfer.items;
+  if (items && items.length && items[0] && items[0].webkitGetAsEntry) {
+    const entries = [];
+    for (const it of items) {
+      const e = it.webkitGetAsEntry && it.webkitGetAsEntry();
+      if (e) entries.push(e);
+    }
+    const out = [];
+    async function walk(entry) {
+      if (entry.isFile) {
+        await new Promise((res) => entry.file((f) => { out.push(f); res(); }, res));
+      } else if (entry.isDirectory) {
+        const reader = entry.createReader();
+        const read = () => new Promise((res) => reader.readEntries(res, () => res([])));
+        let batch;
+        do { batch = await read(); for (const c of batch) await walk(c); } while (batch.length);
+      }
+    }
+    for (const e of entries) await walk(e);
+    return out.filter((f) => IMG_RE.test(f.name));
+  }
+  return Array.from(dataTransfer.files || []).filter((f) => IMG_RE.test(f.name));
+}
+
 export default function AdminUpload() {
   const [secret, setSecret] = useState('');
   const [files, setFiles] = useState([]);
   const [busy, setBusy] = useState(false);
   const [results, setResults] = useState(null);
   const [error, setError] = useState(null);
+  const [dragging, setDragging] = useState(false);
+
+  function mergeFiles(incoming) {
+    setFiles((prev) => {
+      const seen = new Set(prev.map((f) => f.name + f.size));
+      return [...prev, ...incoming.filter((f) => !seen.has(f.name + f.size))];
+    });
+  }
+
+  async function onDrop(e) {
+    e.preventDefault();
+    setDragging(false);
+    const dropped = await gatherFiles(e.dataTransfer);
+    if (dropped.length) mergeFiles(dropped);
+    else setError('No image files found in what you dropped (jpg/png/gif/webp).');
+  }
 
   async function upload() {
     setBusy(true); setError(null); setResults(null);
@@ -25,8 +69,8 @@ export default function AdminUpload() {
     <div style={{ maxWidth: 620 }}>
       <h1>Image upload</h1>
       <p className="muted">
-        Drop in images named by Question ID (e.g. <code>RL-001.jpg</code>, or <code>RL-001_anything.jpg</code>).
-        Each is hosted and attached to its matching question automatically.
+        Images named by Question ID (e.g. <code>RL-001.jpg</code> or <code>RL-001_anything.jpg</code>) are
+        hosted and attached to their matching question automatically.
       </p>
 
       <div className="card" style={{ display: 'grid', gap: 14 }}>
@@ -35,11 +79,34 @@ export default function AdminUpload() {
           <input type="password" value={secret} onChange={(e) => setSecret(e.target.value)}
             placeholder="ADMIN_UPLOAD_SECRET" style={{ width: '100%', padding: 10, borderRadius: 8, border: '1.5px solid var(--slate-300)' }} />
         </label>
-        <label>
-          <div style={{ fontWeight: 600, marginBottom: 6 }}>Images (select many, or a whole folder)</div>
-          <input type="file" accept="image/*" multiple onChange={(e) => setFiles(Array.from(e.target.files))} />
-        </label>
-        {files.length > 0 && <div className="muted">{files.length} file(s) selected</div>}
+
+        <div
+          onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+          onDragEnter={(e) => { e.preventDefault(); setDragging(true); }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={onDrop}
+          style={{
+            border: `2px dashed ${dragging ? 'var(--indigo)' : 'var(--slate-300)'}`,
+            background: dragging ? 'var(--indigo-light)' : 'var(--slate-50)',
+            borderRadius: 12, padding: '28px 16px', textAlign: 'center', transition: 'all .12s',
+          }}
+        >
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>Drag images or a folder here</div>
+          <div className="muted" style={{ fontSize: '.9rem', marginBottom: 10 }}>jpg, png, gif, webp · folders are walked automatically</div>
+          <label className="btn secondary" style={{ cursor: 'pointer' }}>
+            …or choose files
+            <input type="file" accept="image/*" multiple style={{ display: 'none' }}
+              onChange={(e) => mergeFiles(Array.from(e.target.files).filter((f) => IMG_RE.test(f.name)))} />
+          </label>
+        </div>
+
+        {files.length > 0 && (
+          <div className="muted" style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span>{files.length} file(s) ready</span>
+            <button className="btn ghost" style={{ padding: '2px 8px' }} onClick={() => setFiles([])}>clear</button>
+          </div>
+        )}
+
         <button className="btn" disabled={busy || !files.length || !secret} onClick={upload}>
           {busy ? 'Uploading…' : `Upload ${files.length || ''} image(s)`}
         </button>
