@@ -8,11 +8,12 @@ function SessionInner() {
   const sp = useSearchParams();
   const mode = sp.get('mode') || 'random';
   const category = sp.get('category') || null;
+  const style = sp.get('style') === 'flip' ? 'flip' : 'quiz';
   return (
     <div>
       <Link href="/study" className="btn ghost" style={{ paddingLeft: 0 }}>← Practice menu</Link>
       <div style={{ marginTop: 8 }}>
-        <QuestionSession mode={mode} category={category} />
+        <QuestionSession mode={mode} category={category} style={style} />
       </div>
     </div>
   );
