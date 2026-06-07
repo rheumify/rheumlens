@@ -1,0 +1,68 @@
+import { put } from '@vercel/blob';
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
+const BASE = process.env.AIRTABLE_BASE_ID;
+const KEY = process.env.AIRTABLE_API_KEY;
+const TABLE = process.env.AIRTABLE_QUESTIONS_TABLE || 'Image Questions';
+
+// "RL-001_gout_pelvis.jpg" -> "RL-001" ; "RL-001.jpg" -> "RL-001"
+function questionIdFromName(name) {
+  const base = name.replace(/\.[^.]+$/, '');
+  return base.split('_')[0].trim();
+}
+
+async function findRecordId(qid) {
+  const url = new URL(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(TABLE)}`);
+  url.searchParams.set('filterByFormula', `{Question ID} = '${qid}'`);
+  url.searchParams.set('maxRecords', '1');
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${KEY}` }, cache: 'no-store' });
+  if (!res.ok) throw new Error(`Airtable lookup ${res.status}: ${await res.text()}`);
+  const data = await res.json();
+  return data.records?.[0]?.id || null;
+}
+
+async function attach(recId, fields) {
+  const res = await fetch(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(TABLE)}/${recId}`, {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fields }),
+  });
+  if (!res.ok) throw new Error(`Airtable PATCH ${res.status}: ${await res.text()}`);
+}
+
+export async function POST(request) {
+  const secret = process.env.ADMIN_UPLOAD_SECRET;
+  if (!secret) return Response.json({ error: 'ADMIN_UPLOAD_SECRET not configured on the server.' }, { status: 500 });
+  if (request.headers.get('x-admin-secret') !== secret) {
+    return Response.json({ error: 'Unauthorized (bad or missing admin secret).' }, { status: 401 });
+  }
+  if (!BASE || !KEY) return Response.json({ error: 'Airtable env vars missing.' }, { status: 500 });
+
+  let form;
+  try { form = await request.formData(); }
+  catch { return Response.json({ error: 'Send multipart/form-data with a "files" field.' }, { status: 400 }); }
+
+  const files = form.getAll('files').filter((f) => f && typeof f.arrayBuffer === 'function');
+  if (!files.length) return Response.json({ error: 'No files received.' }, { status: 400 });
+
+  const results = [];
+  for (const file of files) {
+    try {
+      const qid = questionIdFromName(file.name);
+      const recId = await findRecordId(qid);
+      if (!recId) { results.push({ file: file.name, qid, status: 'no-matching-question' }); continue; }
+      const buf = Buffer.from(await file.arrayBuffer());
+      const blob = await put(`rheumlens/${qid}.jpg`, buf, {
+        access: 'public', addRandomSuffix: false, contentType: file.type || 'image/jpeg',
+      });
+      await attach(recId, { Image: [{ url: blob.url }], 'Hosted URL': blob.url });
+      results.push({ file: file.name, qid, status: 'attached', url: blob.url });
+    } catch (e) {
+      results.push({ file: file.name, status: 'error', error: e.message });
+    }
+  }
+  const attached = results.filter((r) => r.status === 'attached').length;
+  return Response.json({ attached, total: files.length, results });
+}
