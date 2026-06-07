@@ -15,6 +15,7 @@
     "react-dom": "^18.3.1",
     "@clerk/nextjs": "^6.5.0",
     "@vercel/blob": "^0.27.0",
-    "sharp": "^0.33.5"
+    "sharp": "^0.33.5",
+    "utif": "^3.1.0"
   }
 }
