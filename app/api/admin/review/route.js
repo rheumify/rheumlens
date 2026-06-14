@@ -1,0 +1,74 @@
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
+const BASE = process.env.AIRTABLE_BASE_ID;
+const KEY = process.env.AIRTABLE_API_KEY;
+const TABLE = process.env.AIRTABLE_QUESTIONS_TABLE || 'Image Questions';
+const TABLE_ID = process.env.AIRTABLE_QUESTIONS_TABLE_ID || 'tblrfuk2uD94gwcts';
+
+function authed(request) {
+  const secret = process.env.ADMIN_UPLOAD_SECRET;
+  return Boolean(secret) && request.headers.get('x-admin-secret') === secret;
+}
+
+// GET — return every record with the "Needs Review" box checked.
+export async function GET(request) {
+  if (!authed(request)) return Response.json({ error: 'Unauthorized (bad or missing admin secret).' }, { status: 401 });
+  if (!BASE || !KEY) return Response.json({ error: 'Airtable env vars missing.' }, { status: 500 });
+
+  const records = [];
+  let offset;
+  try {
+    do {
+      const url = new URL(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(TABLE)}`);
+      url.searchParams.set('filterByFormula', '{Needs Review}');
+      url.searchParams.set('pageSize', '100');
+      if (offset) url.searchParams.set('offset', offset);
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${KEY}` }, cache: 'no-store' });
+      if (!res.ok) return Response.json({ error: `Airtable ${res.status}: ${await res.text()}` }, { status: 502 });
+      const data = await res.json();
+      records.push(...(data.records || []));
+      offset = data.offset;
+    } while (offset);
+  } catch (e) {
+    return Response.json({ error: e.message }, { status: 500 });
+  }
+
+  const items = records.map((rec) => {
+    const f = rec.fields || {};
+    const att = Array.isArray(f.Image) && f.Image[0] ? f.Image[0] : null;
+    const image = att ? (att.thumbnails?.large?.url || att.url) : (f['Hosted URL'] || null);
+    return {
+      id: rec.id,
+      qid: f['Question ID'] || '',
+      title: f['Question Title'] || '',
+      category: f.Category || '',
+      imageType: f['Image Type'] || '',
+      difficulty: f.Difficulty || '',
+      claudeQuestion: f['Claude Question'] || '',
+      notes: f.Notes || '',
+      sourceCaption: f['Source Caption'] || '',
+      image,
+      published: Boolean(f.Published),
+      airtableUrl: `https://airtable.com/${BASE}/${TABLE_ID}/${rec.id}`,
+    };
+  });
+  items.sort((a, b) => String(a.qid).localeCompare(String(b.qid)));
+  return Response.json({ count: items.length, records: items });
+}
+
+// POST { id } — clear the "Needs Review" flag (mark resolved).
+export async function POST(request) {
+  if (!authed(request)) return Response.json({ error: 'Unauthorized (bad or missing admin secret).' }, { status: 401 });
+  if (!BASE || !KEY) return Response.json({ error: 'Airtable env vars missing.' }, { status: 500 });
+  let body;
+  try { body = await request.json(); } catch { return Response.json({ error: 'Send JSON { id }.' }, { status: 400 }); }
+  if (!body.id) return Response.json({ error: 'id is required.' }, { status: 400 });
+  const res = await fetch(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(TABLE)}/${body.id}`, {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fields: { 'Needs Review': false } }),
+  });
+  if (!res.ok) return Response.json({ error: `Airtable ${res.status}: ${await res.text()}` }, { status: 502 });
+  return Response.json({ ok: true });
+}
