@@ -1,11 +1,41 @@
 'use client';
 import { useState } from 'react';
 
+const MAX_DIM = 2200;
+const JPEG_QUALITY = 0.85;
+
+// Downscale + re-encode a jpg/png/webp to JPEG so the request stays small.
+// TIFs are passed through unchanged so the server (sharp) converts them.
+async function shrinkToJpeg(file) {
+  if (/\.tiff?$/i.test(file.name) || (file.type || '').includes('tiff')) return file;
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((res, rej) => {
+      const i = new window.Image();
+      i.onload = () => res(i);
+      i.onerror = () => rej(new Error('Could not read image'));
+      i.src = url;
+    });
+    const scale = Math.min(1, MAX_DIM / Math.max(img.naturalWidth, img.naturalHeight));
+    const w = Math.max(1, Math.round(img.naturalWidth * scale));
+    const h = Math.max(1, Math.round(img.naturalHeight * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(img, 0, 0, w, h);
+    const blob = await new Promise((r) => canvas.toBlob(r, 'image/jpeg', JPEG_QUALITY));
+    return blob || file;
+  } catch { return file; }
+  finally { URL.revokeObjectURL(url); }
+}
+
 export default function AdminReview() {
   const [secret, setSecret] = useState('');
   const [items, setItems] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const [replaceBusy, setReplaceBusy] = useState(null);
 
   async function load() {
     setBusy(true); setError(null);
@@ -31,6 +61,32 @@ export default function AdminReview() {
     } catch { /* ignore */ }
   }
 
+  // Replace the image on a record by re-uploading through the existing upload
+  // endpoint. Naming the file by Question ID makes it match and swap the attachment.
+  async function replaceImage(r, fileList) {
+    const file = fileList && fileList[0];
+    if (!file) return;
+    setReplaceBusy(r.id); setError(null);
+    try {
+      const isTiff = /\.tiff?$/i.test(file.name) || (file.type || '').includes('tiff');
+      const body = isTiff ? file : await shrinkToJpeg(file);
+      const named = new File([body], `${r.qid}.${isTiff ? 'tif' : 'jpg'}`, {
+        type: isTiff ? 'image/tiff' : 'image/jpeg',
+      });
+      const fd = new FormData();
+      fd.append('files', named);
+      const res = await fetch('/api/admin/upload', { method: 'POST', headers: { 'x-admin-secret': secret }, body: fd });
+      const raw = await res.text();
+      let data;
+      try { data = JSON.parse(raw); } catch { throw new Error(`Replace failed (${res.status})`); }
+      if (!res.ok) throw new Error(data.error || `Replace failed (${res.status})`);
+      const r0 = data.results && data.results[0];
+      if (r0 && r0.status !== 'attached') throw new Error(`Replace: ${r0.status}${r0.error ? ': ' + r0.error : ''}`);
+      await load(); // refresh to show the new image
+    } catch (e) { setError(e.message); }
+    finally { setReplaceBusy(null); }
+  }
+
   const chip = {
     display: 'inline-block', fontSize: '.72rem', fontWeight: 600, padding: '2px 8px',
     borderRadius: 999, background: 'var(--slate-100, #f1f5f9)', color: 'var(--slate-600, #475569)', marginRight: 6,
@@ -41,7 +97,8 @@ export default function AdminReview() {
       <h1>Review queue</h1>
       <p className="muted">
         Records Claude flagged with a question or uncertainty (the <b>Needs Review</b> box in Airtable).
-        Each shows the image, what Claude is unsure about, and a link to edit the record. Admin only.
+        Each shows the image, what Claude is unsure about, a link to edit the record, and a Replace-image
+        button for swapping in a cleaner picture. Admin only.
       </p>
 
       <div className="card" style={{ display: 'grid', gap: 12, marginBottom: 16 }}>
@@ -115,6 +172,12 @@ export default function AdminReview() {
                   <a className="btn secondary" href={r.airtableUrl} target="_blank" rel="noreferrer" style={{ padding: '6px 12px' }}>
                     Edit in Airtable ↗
                   </a>
+                  <label className="btn secondary" style={{ padding: '6px 12px', cursor: replaceBusy === r.id ? 'wait' : 'pointer' }}>
+                    {replaceBusy === r.id ? 'Replacing…' : 'Replace image'}
+                    <input type="file" accept="image/*,.tif,.tiff" style={{ display: 'none' }}
+                      disabled={replaceBusy === r.id}
+                      onChange={(e) => { replaceImage(r, e.target.files); e.target.value = ''; }} />
+                  </label>
                   <button className="btn ghost" onClick={() => resolve(r.id)} style={{ padding: '6px 12px' }}>
                     Mark resolved
                   </button>
