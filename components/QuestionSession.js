@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { recordAnswer, getMissedIds } from '@/lib/progress';
+import { recordAnswer, getMissedIds, markActiveToday } from '@/lib/progress';
 
 const PREVIEW = process.env.NEXT_PUBLIC_SHOW_DRAFTS === 'true';
 const LETTERS = ['A', 'B', 'C', 'D'];
@@ -19,6 +19,9 @@ export default function QuestionSession({ mode = 'random', category = null, imag
   const [revealed, setRevealed] = useState(false);
   const [zoom, setZoom] = useState(false);
   const [zNatural, setZNatural] = useState(false);
+
+  // Flip-only launch: count any study day toward the streak (correctness isn't tracked in flip).
+  useEffect(() => { if (flip) markActiveToday(); }, [flip]);
 
   // Load questions.
   useEffect(() => {
@@ -202,7 +205,7 @@ export default function QuestionSession({ mode = 'random', category = null, imag
         {Image}
         {revealed ? (
           <div className="explain reveal">
-            <h4>{q.diagnosis || q.title.replace(/^\[DRAFT\]\s*/, '')}</h4>
+            <h4>{q.diagnosis || q.title.replace(/^\[(DRAFT|NEW)\]\s*/i, '')}</h4>
             {q.teachingPoint && <div className="teach"><strong>What to see:</strong> {q.teachingPoint}</div>}
             <div className="chips">
               {q.category && <span className="chip">{q.category}</span>}
