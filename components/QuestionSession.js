@@ -1,55 +1,104 @@
 'use client';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { recordAnswer, toggleFavorite, isFavorite, getFavorites, getMissedIds } from '@/lib/progress';
+import { recordAnswer, getMissedIds } from '@/lib/progress';
 
 const PREVIEW = process.env.NEXT_PUBLIC_SHOW_DRAFTS === 'true';
 const LETTERS = ['A', 'B', 'C', 'D'];
 
+// Favorites and "don't show again" are logged-in-only and stored per account
+// (server /api/progress). Answers / missed / streak stay anonymous (localStorage).
 export default function QuestionSession({ mode = 'random', category = null, style = 'quiz' }) {
   const flip = style === 'flip';
-  const [questions, setQuestions] = useState(null);
+  const [all, setAll] = useState(null);           // raw questions from the API
+  const [account, setAccount] = useState({ signedIn: false, favorites: [], hidden: [], loaded: false });
+  const [questions, setQuestions] = useState(null); // session deck, built once
   const [error, setError] = useState(null);
   const [idx, setIdx] = useState(0);
   const [picked, setPicked] = useState(null);
   const [revealed, setRevealed] = useState(false);
-  const [fav, setFav] = useState(false);
   const [zoom, setZoom] = useState(false);
   const [zNatural, setZNatural] = useState(false);
 
+  // Load questions.
   useEffect(() => {
     const url = new URL('/api/questions', window.location.origin);
     if (category) url.searchParams.set('category', category);
     if (PREVIEW) url.searchParams.set('preview', 'true');
     fetch(url)
       .then((r) => r.json())
-      .then((data) => {
-        let qs = data.questions || [];
-        if (mode === 'favorites') {
-          const ids = new Set(getFavorites());
-          qs = qs.filter((q) => ids.has(q.questionId));
-        } else if (mode === 'missed') {
-          const ids = new Set(getMissedIds());
-          qs = qs.filter((q) => ids.has(q.questionId));
-        }
-        setQuestions(qs);
-        if (data.error) setError(data.error);
-      })
+      .then((d) => { setAll(d.questions || []); if (d.error) setError(d.error); })
       .catch((e) => setError(e.message));
-  }, [mode, category]);
+  }, [category]);
+
+  // Load per-account favorites/hidden (the server decides who's signed in).
+  useEffect(() => {
+    fetch('/api/progress')
+      .then((r) => r.json())
+      .then((d) => setAccount({ signedIn: !!d.signedIn, favorites: d.favorites || [], hidden: d.hidden || [], loaded: true }))
+      .catch(() => setAccount((a) => ({ ...a, loaded: true })));
+  }, []);
+
+  // Build the session deck ONCE, after both questions and account are ready, so
+  // favoriting/hiding mid-session doesn't reshuffle the current run.
+  useEffect(() => {
+    if (questions || !all || !account.loaded) return;
+    let qs = all;
+    if (account.signedIn && account.hidden.length) {
+      const h = new Set(account.hidden);
+      qs = qs.filter((q) => !h.has(q.questionId));
+    }
+    if (mode === 'favorites') {
+      if (account.signedIn) {
+        const f = new Set(account.favorites);
+        qs = qs.filter((q) => f.has(q.questionId));
+      } else {
+        qs = [];
+      }
+    } else if (mode === 'missed') {
+      const ids = new Set(getMissedIds());
+      qs = qs.filter((q) => ids.has(q.questionId));
+    }
+    setQuestions(qs);
+  }, [all, account, questions, mode]);
 
   const q = questions && questions[idx];
-  useEffect(() => { if (q) setFav(isFavorite(q.questionId)); }, [q]);
+  const signedIn = account.signedIn;
+  const isFav = q ? account.favorites.includes(q.questionId) : false;
 
   if (error && !questions?.length) return <div className="banner-error">Could not load questions: {error}</div>;
   if (!questions) return <p className="center muted">Loading…</p>;
   if (!questions.length) {
     return (
       <div className="card center">
-        <p>No questions here yet.</p>
+        <p>{mode === 'favorites' ? 'No favorites yet — tap the star on a card to save it here.' : 'No questions here yet.'}</p>
         <Link href="/study" className="btn secondary">Back to practice</Link>
       </div>
     );
+  }
+
+  async function persist(action, questionId) {
+    try {
+      await fetch('/api/progress', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, questionId }),
+      });
+    } catch { /* optimistic UI already applied */ }
+  }
+  function toggleFav() {
+    if (!signedIn || !q) return;
+    const qid = q.questionId;
+    const has = account.favorites.includes(qid);
+    setAccount((a) => ({ ...a, favorites: has ? a.favorites.filter((x) => x !== qid) : [...a.favorites, qid] }));
+    persist(has ? 'unfavorite' : 'favorite', qid);
+  }
+  function hideCard() {
+    if (!signedIn || !q) return;
+    const qid = q.questionId;
+    setAccount((a) => ({ ...a, hidden: [...a.hidden, qid], favorites: a.favorites.filter((x) => x !== qid) }));
+    persist('hide', qid);
+    next();
   }
 
   function choose(letter) {
@@ -83,9 +132,11 @@ export default function QuestionSession({ mode = 'random', category = null, styl
     <div>
       <div className="progress-top">
         <span>{flip ? 'Image' : 'Question'} {idx + 1} of {questions.length}</span>
-        <button className="fav" title="Favorite" onClick={() => setFav(toggleFavorite(q.questionId))}>
-          {fav ? '★' : '☆'}
-        </button>
+        {signedIn && (
+          <button className="fav" title={isFav ? 'Unfavorite' : 'Favorite'} onClick={toggleFav}>
+            {isFav ? '★' : '☆'}
+          </button>
+        )}
       </div>
       <div className="bar"><div style={{ width: `${(idx / questions.length) * 100}%` }} /></div>
     </div>
@@ -132,6 +183,16 @@ export default function QuestionSession({ mode = 'random', category = null, styl
     </div>
   );
 
+  // Logged-in-only card actions: favorite + don't-show-again.
+  const AccountActions = signedIn ? (
+    <>
+      <button className="btn secondary" onClick={toggleFav}>{isFav ? '★ Favorited' : '☆ Favorite'}</button>
+      <button className="btn ghost" onClick={hideCard} title="Hide this card from your deck across your devices">
+        Don’t show again
+      </button>
+    </>
+  ) : null;
+
   // ---------- FLIP MODE: image -> reveal finding -> next ----------
   if (flip) {
     return (
@@ -148,9 +209,7 @@ export default function QuestionSession({ mode = 'random', category = null, styl
             </div>
             <div className="btn-row" style={{ marginTop: 16 }}>
               <button className="btn" onClick={next}>{idx + 1 < questions.length ? 'Next image →' : 'Finish'}</button>
-              <button className="btn secondary" onClick={() => setFav(toggleFavorite(q.questionId))}>
-                {fav ? '★ Favorited' : '☆ Favorite'}
-              </button>
+              {AccountActions}
             </div>
           </div>
         ) : (
@@ -204,6 +263,7 @@ export default function QuestionSession({ mode = 'random', category = null, styl
             <button className="btn" onClick={next}>
               {idx + 1 < questions.length ? 'Next question →' : 'Finish'}
             </button>
+            {AccountActions}
           </div>
         </div>
       )}
