@@ -30,6 +30,10 @@ function Shell({ children }) {
             Images courtesy of the ACR Rheumatology Image Library. Copyright ACR.
             Used with permission for non-commercial educational purposes.
           </p>
+          <p className="muted">
+            RheumLens is an independent educational project. It is not affiliated with, produced by,
+            or endorsed by the American College of Rheumatology (ACR).
+          </p>
           <p className="muted">RheumLens is a free educational resource. No ads. No sign-up required.</p>
         </footer>
       </body>
