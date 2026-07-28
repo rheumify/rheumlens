@@ -75,9 +75,23 @@ export async function POST(request) {
   let body;
   try { body = await request.json(); } catch { return Response.json({ error: 'Send JSON { id }.' }, { status: 400 }); }
   if (!body.id) return Response.json({ error: 'id is required.' }, { status: 400 });
-  const fields = body.publish
-    ? { Published: true, 'Needs Review': false }
-    : { 'Needs Review': false };
+  let fields = { 'Needs Review': false };
+  if (body.publish) {
+    fields = { Published: true, 'Needs Review': false };
+    // On publish, strip a leading [NEW]/[DRAFT] tag from the title so validated
+    // cards read clean in Airtable/admin. (Learners see the Diagnosis, not the title.)
+    try {
+      const g = await fetch(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(TABLE)}/${body.id}`, {
+        headers: { Authorization: `Bearer ${KEY}` },
+      });
+      if (g.ok) {
+        const rec = await g.json();
+        const t = rec.fields?.['Question Title'] || '';
+        const cleaned = t.replace(/^\s*\[(NEW|DRAFT)\]\s*/i, '').trim();
+        if (cleaned && cleaned !== t) fields['Question Title'] = cleaned;
+      }
+    } catch { /* non-fatal: publish still proceeds even if the rename lookup fails */ }
+  }
   const res = await fetch(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(TABLE)}/${body.id}`, {
     method: 'PATCH',
     headers: { Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' },
