@@ -57,10 +57,9 @@ export default function StudyHub() {
       </p>
       {Toggle}
 
-      {stats && stats.answered > 0 && (
+      {stats && stats.streak > 0 && (
         <p className="muted" style={{ marginTop: 10 }}>
-          {stats.answered} answered · {stats.accuracy}% correct
-          {stats.streak > 0 && <> · 🔥 {stats.streak}-day streak</>}
+          🔥 {stats.streak}-day streak
         </p>
       )}
 
