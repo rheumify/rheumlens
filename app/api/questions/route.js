@@ -20,11 +20,12 @@ export async function GET(request) {
   try {
     const { searchParams } = new URL(request.url);
     const category = searchParams.get('category') || undefined;
+    const imageType = searchParams.get('imageType') || undefined;
     const admin = isAdmin(request);
     // Public: published, non-held only. Admin + ?preview=true: also drafts + held.
     const includeDrafts = admin && searchParams.get('preview') === 'true';
     const includeHeld = includeDrafts;
-    const questions = shuffle(await getQuestions({ category, includeDrafts, includeHeld }));
+    const questions = shuffle(await getQuestions({ category, imageType, includeDrafts, includeHeld }));
     return Response.json({ questions });
   } catch (e) {
     return Response.json({ error: e.message, questions: [] }, { status: 500 });
