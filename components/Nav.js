@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import ClerkAuth from './ClerkAuth';
+import ThemeToggle from './ThemeToggle';
 
 const hasClerk = !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
 
@@ -13,6 +14,7 @@ export default function Nav() {
         <div className="nav-actions">
           <Link href="/study">Practice</Link>
           {hasClerk && <ClerkAuth />}
+          <ThemeToggle />
         </div>
       </div>
     </nav>
