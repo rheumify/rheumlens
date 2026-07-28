@@ -136,7 +136,7 @@ export default function QuestionSession({ mode = 'random', category = null, styl
         {ProgressHeader}
         {Image}
         {revealed ? (
-          <div className="explain correct">
+          <div className="explain reveal">
             <h4>{q.diagnosis || q.title.replace(/^\[DRAFT\]\s*/, '')}</h4>
             {q.teachingPoint && <div className="teach"><strong>What to see:</strong> {q.teachingPoint}</div>}
             <div className="chips">
@@ -145,6 +145,9 @@ export default function QuestionSession({ mode = 'random', category = null, styl
             </div>
             <div className="btn-row" style={{ marginTop: 16 }}>
               <button className="btn" onClick={next}>{idx + 1 < questions.length ? 'Next image →' : 'Finish'}</button>
+              <button className="btn secondary" onClick={() => setFav(toggleFavorite(q.questionId))}>
+                {fav ? '★ Favorited' : '☆ Favorite'}
+              </button>
             </div>
           </div>
         ) : (
