@@ -9,7 +9,7 @@ export default function StudyHub() {
   const [categories, setCategories] = useState(null);
   const [stats, setStats] = useState(null);
   const [error, setError] = useState(null);
-  const [style, setStyle] = useState('quiz');
+  const [style, setStyle] = useState('flip');
 
   useEffect(() => {
     setStats(getStats());
@@ -25,16 +25,10 @@ export default function StudyHub() {
   const q = (params) => `/study/session?${params}&style=${style}`;
 
   const Toggle = (
-    <div style={{ display: 'inline-flex', background: 'var(--slate-100)', borderRadius: 999, padding: 3, marginTop: 8 }}>
-      {[['quiz', 'Quiz'], ['flip', 'Flip cards']].map(([val, label]) => (
-        <button key={val} onClick={() => setStyle(val)}
-          style={{
-            border: 'none', cursor: 'pointer', borderRadius: 999, padding: '7px 16px', fontWeight: 600, fontSize: '.9rem',
-            background: style === val ? 'var(--white)' : 'transparent',
-            color: style === val ? 'var(--indigo)' : 'var(--slate-500)',
-            boxShadow: style === val ? '0 1px 3px rgba(15,23,42,.12)' : 'none',
-          }}>
-          {label}
+    <div className="style-toggle">
+      {[['flip', 'Flip cards', false], ['quiz', 'Quiz', true]].map(([val, label, soon]) => (
+        <button key={val} className={style === val ? 'active' : ''} onClick={() => setStyle(val)}>
+          {label}{soon && <span className="soon">soon</span>}
         </button>
       ))}
     </div>
