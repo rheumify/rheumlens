@@ -48,6 +48,8 @@ export async function GET(request) {
       id: rec.id,
       qid: f['Question ID'] || '',
       title: f['Question Title'] || '',
+      diagnosis: f['Diagnosis'] || '',
+      teachingPoint: f['Visual Teaching Point'] || '',
       category: f.Category || '',
       imageType: f['Image Type'] || '',
       difficulty: f.Difficulty || '',
