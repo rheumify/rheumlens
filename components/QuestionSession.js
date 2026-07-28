@@ -97,7 +97,10 @@ export default function QuestionSession({ mode = 'random', category = null, styl
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={q.imageUrl} alt={q.imageAlt || 'Clinical image'} />
       </div>
-      <div className="credit">{q.credit} · tap image to zoom</div>
+      <div className="credit">
+        {q.credit}
+        {q.acrRef && <> · ACR ref <strong>{q.acrRef}</strong></>} · tap image to zoom
+      </div>
     </div>
   ) : (
     <div className="q-image-missing">
