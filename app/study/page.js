@@ -9,6 +9,7 @@ const QUIZ_ENABLED = false;
 
 export default function StudyHub() {
   const [categories, setCategories] = useState(null);
+  const [imageTypes, setImageTypes] = useState(null);
   const [stats, setStats] = useState(null);
   const [error, setError] = useState(null);
   const [style, setStyle] = useState('flip');
@@ -20,7 +21,7 @@ export default function StudyHub() {
     if (PREVIEW) url.searchParams.set('preview', 'true');
     fetch(url)
       .then((r) => r.json())
-      .then((d) => { setCategories(d.categories || []); if (d.error) setError(d.error); })
+      .then((d) => { setCategories(d.categories || []); setImageTypes(d.imageTypes || []); if (d.error) setError(d.error); })
       .catch((e) => setError(e.message));
     fetch('/api/progress')
       .then((r) => r.json())
@@ -92,6 +93,22 @@ export default function StudyHub() {
           ))}
         </div>
       </div>
+
+      {imageTypes && imageTypes.length > 0 && (
+        <div className="card" style={{ marginTop: 16 }}>
+          <h3 style={{ marginTop: 0 }}>By image type</h3>
+          <p className="muted" style={{ margin: '0 0 4px', fontSize: '.9rem' }}>
+            Drill one kind of image — crystals under the microscope, radiographs, ultrasound, CT/MRI, clinical photos, and more.
+          </p>
+          <div className="choice-list">
+            {imageTypes.map((t) => (
+              <Link key={t.name} href={q(`mode=imagetype&imageType=${encodeURIComponent(t.name)}`)} className="choice">
+                <span>{t.name}</span><span className="count-badge">{t.count}</span>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
