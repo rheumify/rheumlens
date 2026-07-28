@@ -111,8 +111,9 @@ export default function AdminReview() {
       <p className="muted">
         Nothing is visible to users until it&apos;s <b>Published</b>. Drafts and <b>[NEW]</b> uploads
         stay private to this admin screen. Use <b>Flagged</b> for records Claude marked with a question,
-        or <b>All unpublished</b> to work through everything not yet live. Each record can be published
-        or resolved right here, edited in Airtable, or given a replacement image. Admin only.
+        or <b>All unpublished</b> to work through everything not yet live. Each record shows the image and
+        its flip answer, and can be published or resolved right here, edited in Airtable, or given a
+        replacement image. Admin only.
       </p>
 
       <div className="card" style={{ display: 'grid', gap: 12, marginBottom: 16 }}>
@@ -167,6 +168,15 @@ export default function AdminReview() {
                     </div>
                   </div>
                 </div>
+
+                {(r.diagnosis || r.teachingPoint) && (
+                  <div style={{ background: 'var(--brand-bg, #f0edf7)', borderRadius: 8, padding: '10px 12px' }}>
+                    {r.diagnosis && <div style={{ fontWeight: 700 }}>{r.diagnosis}</div>}
+                    {r.teachingPoint && (
+                      <div style={{ fontSize: '.9rem', marginTop: 4 }}><b>What to see:</b> {r.teachingPoint}</div>
+                    )}
+                  </div>
+                )}
 
                 {r.claudeQuestion && (
                   <div style={{ background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, padding: '10px 12px' }}>
