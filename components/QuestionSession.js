@@ -8,7 +8,7 @@ const LETTERS = ['A', 'B', 'C', 'D'];
 
 // Favorites and "don't show again" are logged-in-only and stored per account
 // (server /api/progress). Answers / missed / streak stay anonymous (localStorage).
-export default function QuestionSession({ mode = 'random', category = null, style = 'quiz' }) {
+export default function QuestionSession({ mode = 'random', category = null, imageType = null, style = 'quiz' }) {
   const flip = style === 'flip';
   const [all, setAll] = useState(null);           // raw questions from the API
   const [account, setAccount] = useState({ signedIn: false, favorites: [], hidden: [], loaded: false });
@@ -24,12 +24,13 @@ export default function QuestionSession({ mode = 'random', category = null, styl
   useEffect(() => {
     const url = new URL('/api/questions', window.location.origin);
     if (category) url.searchParams.set('category', category);
+    if (imageType) url.searchParams.set('imageType', imageType);
     if (PREVIEW) url.searchParams.set('preview', 'true');
     fetch(url)
       .then((r) => r.json())
       .then((d) => { setAll(d.questions || []); if (d.error) setError(d.error); })
       .catch((e) => setError(e.message));
-  }, [category]);
+  }, [category, imageType]);
 
   // Load per-account favorites/hidden (the server decides who's signed in).
   useEffect(() => {
