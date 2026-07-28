@@ -1,4 +1,4 @@
-import { getCategories } from '@/lib/airtable';
+import { getCategories, getImageTypes } from '@/lib/airtable';
 
 // Draft categories/counts are NEVER exposed to the public — only an admin
 // request carrying the correct secret may preview unpublished records.
@@ -11,9 +11,12 @@ export async function GET(request) {
   try {
     const { searchParams } = new URL(request.url);
     const includeDrafts = isAdmin(request) && searchParams.get('preview') === 'true';
-    const categories = await getCategories({ includeDrafts });
-    return Response.json({ categories });
+    const [categories, imageTypes] = await Promise.all([
+      getCategories({ includeDrafts }),
+      getImageTypes({ includeDrafts }),
+    ]);
+    return Response.json({ categories, imageTypes });
   } catch (e) {
-    return Response.json({ error: e.message, categories: [] }, { status: 500 });
+    return Response.json({ error: e.message, categories: [], imageTypes: [] }, { status: 500 });
   }
 }
