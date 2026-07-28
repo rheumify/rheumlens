@@ -36,11 +36,13 @@ export default function AdminReview() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [replaceBusy, setReplaceBusy] = useState(null);
+  const [scope, setScope] = useState('flagged');
 
-  async function load() {
-    setBusy(true); setError(null);
+  async function load(which = 'flagged') {
+    setBusy(true); setError(null); setScope(which);
     try {
-      const res = await fetch('/api/admin/review', { headers: { 'x-admin-secret': secret } });
+      const url = which === 'all' ? '/api/admin/review?scope=all' : '/api/admin/review';
+      const res = await fetch(url, { headers: { 'x-admin-secret': secret } });
       const raw = await res.text();
       let data;
       try { data = JSON.parse(raw); } catch { throw new Error(`Failed (${res.status}): ${raw.slice(0, 120)}`); }
@@ -48,6 +50,17 @@ export default function AdminReview() {
       setItems(data.records);
     } catch (e) { setError(e.message); }
     finally { setBusy(false); }
+  }
+
+  async function publish(id) {
+    try {
+      const res = await fetch('/api/admin/review', {
+        method: 'POST',
+        headers: { 'x-admin-secret': secret, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, publish: true }),
+      });
+      if (res.ok) setItems((prev) => prev.filter((x) => x.id !== id));
+    } catch { /* ignore */ }
   }
 
   async function resolve(id) {
@@ -82,7 +95,7 @@ export default function AdminReview() {
       if (!res.ok) throw new Error(data.error || `Replace failed (${res.status})`);
       const r0 = data.results && data.results[0];
       if (r0 && r0.status !== 'attached') throw new Error(`Replace: ${r0.status}${r0.error ? ': ' + r0.error : ''}`);
-      await load(); // refresh to show the new image
+      await load(scope); // refresh to show the new image
     } catch (e) { setError(e.message); }
     finally { setReplaceBusy(null); }
   }
@@ -96,9 +109,10 @@ export default function AdminReview() {
     <div style={{ maxWidth: 760 }}>
       <h1>Review queue</h1>
       <p className="muted">
-        Records Claude flagged with a question or uncertainty (the <b>Needs Review</b> box in Airtable).
-        Each shows the image, what Claude is unsure about, a link to edit the record, and a Replace-image
-        button for swapping in a cleaner picture. Admin only.
+        Nothing is visible to users until it&apos;s <b>Published</b>. Drafts and <b>[NEW]</b> uploads
+        stay private to this admin screen. Use <b>Flagged</b> for records Claude marked with a question,
+        or <b>All unpublished</b> to work through everything not yet live. Each record can be published
+        or resolved right here, edited in Airtable, or given a replacement image. Admin only.
       </p>
 
       <div className="card" style={{ display: 'grid', gap: 12, marginBottom: 16 }}>
@@ -108,9 +122,14 @@ export default function AdminReview() {
             placeholder="ADMIN_UPLOAD_SECRET"
             style={{ width: '100%', padding: 10, borderRadius: 8, border: '1.5px solid var(--slate-300, #cbd5e1)' }} />
         </label>
-        <button className="btn" disabled={busy || !secret} onClick={load}>
-          {busy ? 'Loading…' : 'Load review queue'}
-        </button>
+        <div className="btn-row">
+          <button className="btn" disabled={busy || !secret} onClick={() => load('flagged')}>
+            {busy && scope === 'flagged' ? 'Loading…' : 'Load flagged'}
+          </button>
+          <button className="btn secondary" disabled={busy || !secret} onClick={() => load('all')}>
+            {busy && scope === 'all' ? 'Loading…' : 'Load all unpublished'}
+          </button>
+        </div>
       </div>
 
       {error && <div className="banner-error" style={{ marginBottom: 14 }}>{error}</div>}
@@ -121,7 +140,9 @@ export default function AdminReview() {
 
       {items && items.length > 0 && (
         <>
-          <div className="muted" style={{ marginBottom: 10 }}>{items.length} flagged record(s)</div>
+          <div className="muted" style={{ marginBottom: 10 }}>
+            {items.length} {scope === 'all' ? 'unpublished' : 'flagged'} record(s)
+          </div>
           <div style={{ display: 'grid', gap: 16 }}>
             {items.map((r) => (
               <div key={r.id} className="card" style={{ display: 'grid', gap: 10 }}>
@@ -142,6 +163,7 @@ export default function AdminReview() {
                       <span style={{ ...chip, background: r.published ? '#dcfce7' : '#fef9c3', color: r.published ? '#166534' : '#854d0e' }}>
                         {r.published ? 'Published' : 'Draft'}
                       </span>
+                      {r.needsReview && <span style={{ ...chip, background: '#fef2f2', color: '#991b1b' }}>Flagged</span>}
                     </div>
                   </div>
                 </div>
@@ -169,6 +191,11 @@ export default function AdminReview() {
                 )}
 
                 <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                  {!r.published && (
+                    <button className="btn" onClick={() => publish(r.id)} style={{ padding: '6px 12px' }}>
+                      Publish ✓
+                    </button>
+                  )}
                   <a className="btn secondary" href={r.airtableUrl} target="_blank" rel="noreferrer" style={{ padding: '6px 12px' }}>
                     Edit in Airtable ↗
                   </a>
