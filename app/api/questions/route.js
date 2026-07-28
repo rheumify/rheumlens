@@ -9,13 +9,22 @@ function shuffle(a) {
   return arr;
 }
 
+// Drafts and [NEW] uploads are NEVER served to the public. Only a request that
+// carries the correct admin secret may preview unpublished / held records.
+function isAdmin(request) {
+  const secret = process.env.ADMIN_UPLOAD_SECRET;
+  return Boolean(secret) && request.headers.get('x-admin-secret') === secret;
+}
+
 export async function GET(request) {
   try {
     const { searchParams } = new URL(request.url);
     const category = searchParams.get('category') || undefined;
-    const includeDrafts =
-      searchParams.get('preview') === 'true' || process.env.NEXT_PUBLIC_SHOW_DRAFTS === 'true';
-    const questions = shuffle(await getQuestions({ category, includeDrafts }));
+    const admin = isAdmin(request);
+    // Public: published, non-held only. Admin + ?preview=true: also drafts + held.
+    const includeDrafts = admin && searchParams.get('preview') === 'true';
+    const includeHeld = includeDrafts;
+    const questions = shuffle(await getQuestions({ category, includeDrafts, includeHeld }));
     return Response.json({ questions });
   } catch (e) {
     return Response.json({ error: e.message, questions: [] }, { status: 500 });
