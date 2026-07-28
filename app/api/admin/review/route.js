@@ -11,17 +11,23 @@ function authed(request) {
   return Boolean(secret) && request.headers.get('x-admin-secret') === secret;
 }
 
-// GET — return every record with the "Needs Review" box checked.
+// GET — review queue.
+//   default            → records with the "Needs Review" box checked (flagged).
+//   ?scope=all         → every record not yet Published (drafts + [NEW] uploads),
+//                        so nothing goes live to users until it's reviewed here.
 export async function GET(request) {
   if (!authed(request)) return Response.json({ error: 'Unauthorized (bad or missing admin secret).' }, { status: 401 });
   if (!BASE || !KEY) return Response.json({ error: 'Airtable env vars missing.' }, { status: 500 });
+
+  const scope = new URL(request.url).searchParams.get('scope');
+  const filterFormula = scope === 'all' ? 'NOT({Published})' : '{Needs Review}';
 
   const records = [];
   let offset;
   try {
     do {
       const url = new URL(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(TABLE)}`);
-      url.searchParams.set('filterByFormula', '{Needs Review}');
+      url.searchParams.set('filterByFormula', filterFormula);
       url.searchParams.set('pageSize', '100');
       if (offset) url.searchParams.set('offset', offset);
       const res = await fetch(url, { headers: { Authorization: `Bearer ${KEY}` }, cache: 'no-store' });
@@ -50,6 +56,7 @@ export async function GET(request) {
       sourceCaption: f['Source Caption'] || '',
       image,
       published: Boolean(f.Published),
+      needsReview: Boolean(f['Needs Review']),
       airtableUrl: `https://airtable.com/${BASE}/${TABLE_ID}/${rec.id}`,
     };
   });
@@ -57,17 +64,22 @@ export async function GET(request) {
   return Response.json({ count: items.length, records: items });
 }
 
-// POST { id } — clear the "Needs Review" flag (mark resolved).
+// POST { id, publish? } —
+//   default          → clear the "Needs Review" flag (mark resolved).
+//   { publish:true } → make the record live: set Published, clear Needs Review.
 export async function POST(request) {
   if (!authed(request)) return Response.json({ error: 'Unauthorized (bad or missing admin secret).' }, { status: 401 });
   if (!BASE || !KEY) return Response.json({ error: 'Airtable env vars missing.' }, { status: 500 });
   let body;
   try { body = await request.json(); } catch { return Response.json({ error: 'Send JSON { id }.' }, { status: 400 }); }
   if (!body.id) return Response.json({ error: 'id is required.' }, { status: 400 });
+  const fields = body.publish
+    ? { Published: true, 'Needs Review': false }
+    : { 'Needs Review': false };
   const res = await fetch(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(TABLE)}/${body.id}`, {
     method: 'PATCH',
     headers: { Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ fields: { 'Needs Review': false } }),
+    body: JSON.stringify({ fields }),
   });
   if (!res.ok) return Response.json({ error: `Airtable ${res.status}: ${await res.text()}` }, { status: 502 });
   return Response.json({ ok: true });
