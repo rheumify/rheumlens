@@ -45,7 +45,10 @@ export default function AdminReview() {
   async function load(which = 'flagged') {
     setBusy(true); setError(null); setScope(which);
     try {
-      const url = which === 'all' ? '/api/admin/review?scope=all' : '/api/admin/review';
+      const url =
+        which === 'all' ? '/api/admin/review?scope=all'
+        : which === 'questions' ? '/api/admin/review?scope=questions'
+        : '/api/admin/review';
       const res = await fetch(url, { headers: { 'x-admin-secret': secret } });
       const raw = await res.text();
       let data;
@@ -99,6 +102,24 @@ export default function AdminReview() {
       setCommentSaved(id);
     } catch (e) { setError(e.message); }
     finally { setCommentBusy(null); }
+  }
+
+  // Toggle the "Create Question" star — flag a strong image to build a full
+  // quiz question from later. Updates in place; the card stays in view.
+  async function toggleCreateQuestion(r, checked) {
+    setItems((prev) => prev.map((x) => (x.id === r.id ? { ...x, createQuestion: checked } : x)));
+    try {
+      const res = await fetch('/api/admin/review', {
+        method: 'POST',
+        headers: { 'x-admin-secret': secret, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: r.id, createQuestion: checked }),
+      });
+      if (!res.ok) throw new Error();
+    } catch {
+      // revert on failure
+      setItems((prev) => prev.map((x) => (x.id === r.id ? { ...x, createQuestion: !checked } : x)));
+      setError('Could not save the "Create a question" flag — check the admin secret and try again.');
+    }
   }
 
   // Permanently delete a record (and its image) from Airtable. Guarded by confirm.
@@ -160,7 +181,9 @@ export default function AdminReview() {
         or <b>All unpublished</b> to work through everything not yet live. Each record shows the image and
         its flip answer, and can be published or resolved right here, edited in Airtable, or given a
         replacement image. Leave a <b>comment</b> on any card and the next Claude session will read it,
-        make the edit, and clear it. <b>Delete</b> permanently removes a card. Admin only.
+        make the edit, and clear it. Tick <b>⭐ Create a question</b> to flag a strong image to build a
+        full question from later (pull them with <b>Load question candidates</b>). <b>Delete</b>
+        permanently removes a card. Admin only.
       </p>
 
       <div className="card" style={{ display: 'grid', gap: 12, marginBottom: 16 }}>
@@ -177,6 +200,9 @@ export default function AdminReview() {
           <button className="btn secondary" disabled={busy || !secret} onClick={() => load('all')}>
             {busy && scope === 'all' ? 'Loading…' : 'Load all unpublished'}
           </button>
+          <button className="btn secondary" disabled={busy || !secret} onClick={() => load('questions')}>
+            {busy && scope === 'questions' ? 'Loading…' : 'Load question candidates ⭐'}
+          </button>
         </div>
       </div>
 
@@ -189,7 +215,7 @@ export default function AdminReview() {
       {items && items.length > 0 && (
         <>
           <div className="muted" style={{ marginBottom: 10 }}>
-            {items.length} {scope === 'all' ? 'unpublished' : 'flagged'} record(s)
+            {items.length} {scope === 'all' ? 'unpublished' : scope === 'questions' ? 'question-candidate' : 'flagged'} record(s)
           </div>
           <div style={{ display: 'grid', gap: 16 }}>
             {items.map((r) => (
@@ -268,6 +294,20 @@ export default function AdminReview() {
                     {r.reviewComment && commentSaved !== r.id && <span className="muted" style={{ fontSize: '.8rem' }}>Comment on file — Claude will act on it.</span>}
                   </div>
                 </div>
+
+                <label style={{
+                  display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
+                  padding: '8px 12px', borderRadius: 8,
+                  background: r.createQuestion ? '#fef9c3' : 'var(--slate-100, #f8fafc)',
+                  border: `1.5px solid ${r.createQuestion ? '#fde047' : 'var(--slate-200, #e2e8f0)'}`,
+                }}>
+                  <input type="checkbox" checked={!!r.createQuestion}
+                    onChange={(e) => toggleCreateQuestion(r, e.target.checked)}
+                    style={{ width: 16, height: 16 }} />
+                  <span style={{ fontWeight: 600, fontSize: '.9rem' }}>
+                    ⭐ Create a question from this image {r.createQuestion && <span className="muted" style={{ fontWeight: 400 }}>— flagged</span>}
+                  </span>
+                </label>
 
                 <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
                   {!r.published && (
