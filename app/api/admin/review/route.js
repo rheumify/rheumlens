@@ -55,6 +55,7 @@ export async function GET(request) {
       difficulty: f.Difficulty || '',
       claudeQuestion: f['Claude Question'] || '',
       notes: f.Notes || '',
+      reviewComment: f['Review Comment'] || '',
       sourceCaption: f['Source Caption'] || '',
       image,
       published: Boolean(f.Published),
@@ -66,16 +67,20 @@ export async function GET(request) {
   return Response.json({ count: items.length, records: items });
 }
 
-// POST { id, publish? } —
-//   default          → clear the "Needs Review" flag (mark resolved).
-//   { publish:true } → make the record live: set Published, clear Needs Review.
+// POST { id, publish?, comment? } —
+//   { publish:true }   → make the record live: set Published, clear Needs Review.
+//   { comment:'...' }  → save Ali's review comment for the next Claude session to act on.
+//                        Does NOT clear the flag or remove the card — it stays in the queue.
+//                        Sending an empty string clears the comment.
+//   default            → clear the "Needs Review" flag (mark resolved).
 export async function POST(request) {
   if (!authed(request)) return Response.json({ error: 'Unauthorized (bad or missing admin secret).' }, { status: 401 });
   if (!BASE || !KEY) return Response.json({ error: 'Airtable env vars missing.' }, { status: 500 });
   let body;
   try { body = await request.json(); } catch { return Response.json({ error: 'Send JSON { id }.' }, { status: 400 }); }
   if (!body.id) return Response.json({ error: 'id is required.' }, { status: 400 });
-  let fields = { 'Needs Review': false };
+
+  let fields;
   if (body.publish) {
     fields = { Published: true, 'Needs Review': false };
     // On publish, strip a leading [NEW]/[DRAFT] tag from the title so validated
@@ -91,7 +96,14 @@ export async function POST(request) {
         if (cleaned && cleaned !== t) fields['Question Title'] = cleaned;
       }
     } catch { /* non-fatal: publish still proceeds even if the rename lookup fails */ }
+  } else if (typeof body.comment === 'string') {
+    // Save Ali's review comment. Keep the card in the queue so it stays visible
+    // until the next Claude session reads the comment, edits the card, and clears it.
+    fields = { 'Review Comment': body.comment };
+  } else {
+    fields = { 'Needs Review': false };
   }
+
   const res = await fetch(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(TABLE)}/${body.id}`, {
     method: 'PATCH',
     headers: { Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' },
@@ -99,4 +111,21 @@ export async function POST(request) {
   });
   if (!res.ok) return Response.json({ error: `Airtable ${res.status}: ${await res.text()}` }, { status: 502 });
   return Response.json({ ok: true });
+}
+
+// DELETE { id } — permanently remove the record (and its attached image) from
+// Airtable. Irreversible; the admin UI guards it with a confirm dialog.
+export async function DELETE(request) {
+  if (!authed(request)) return Response.json({ error: 'Unauthorized (bad or missing admin secret).' }, { status: 401 });
+  if (!BASE || !KEY) return Response.json({ error: 'Airtable env vars missing.' }, { status: 500 });
+  let body;
+  try { body = await request.json(); } catch { return Response.json({ error: 'Send JSON { id }.' }, { status: 400 }); }
+  if (!body.id) return Response.json({ error: 'id is required.' }, { status: 400 });
+
+  const res = await fetch(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(TABLE)}/${body.id}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${KEY}` },
+  });
+  if (!res.ok) return Response.json({ error: `Airtable ${res.status}: ${await res.text()}` }, { status: 502 });
+  return Response.json({ ok: true, deleted: body.id });
 }
