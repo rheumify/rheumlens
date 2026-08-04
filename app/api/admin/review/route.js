@@ -15,12 +15,17 @@ function authed(request) {
 //   default            → records with the "Needs Review" box checked (flagged).
 //   ?scope=all         → every record not yet Published (drafts + [NEW] uploads),
 //                        so nothing goes live to users until it's reviewed here.
+//   ?scope=questions   → records with "Create Question" checked (good images Ali
+//                        flagged to build a full quiz question from later).
 export async function GET(request) {
   if (!authed(request)) return Response.json({ error: 'Unauthorized (bad or missing admin secret).' }, { status: 401 });
   if (!BASE || !KEY) return Response.json({ error: 'Airtable env vars missing.' }, { status: 500 });
 
   const scope = new URL(request.url).searchParams.get('scope');
-  const filterFormula = scope === 'all' ? 'NOT({Published})' : '{Needs Review}';
+  const filterFormula =
+    scope === 'all' ? 'NOT({Published})'
+    : scope === 'questions' ? '{Create Question}'
+    : '{Needs Review}';
 
   const records = [];
   let offset;
@@ -60,6 +65,7 @@ export async function GET(request) {
       image,
       published: Boolean(f.Published),
       needsReview: Boolean(f['Needs Review']),
+      createQuestion: Boolean(f['Create Question']),
       airtableUrl: `https://airtable.com/${BASE}/${TABLE_ID}/${rec.id}`,
     };
   });
@@ -67,12 +73,14 @@ export async function GET(request) {
   return Response.json({ count: items.length, records: items });
 }
 
-// POST { id, publish?, comment? } —
-//   { publish:true }   → make the record live: set Published, clear Needs Review.
-//   { comment:'...' }  → save Ali's review comment for the next Claude session to act on.
-//                        Does NOT clear the flag or remove the card — it stays in the queue.
-//                        Sending an empty string clears the comment.
-//   default            → clear the "Needs Review" flag (mark resolved).
+// POST { id, publish?, createQuestion?, comment? } —
+//   { publish:true }          → make the record live: set Published, clear Needs Review.
+//   { createQuestion:bool }   → toggle the "Create Question" star (flag good image for a
+//                               full question later). Card stays in the current view.
+//   { comment:'...' }         → save Ali's review comment for the next Claude session to act on.
+//                               Does NOT clear the flag or remove the card — it stays in the queue.
+//                               Sending an empty string clears the comment.
+//   default                   → clear the "Needs Review" flag (mark resolved).
 export async function POST(request) {
   if (!authed(request)) return Response.json({ error: 'Unauthorized (bad or missing admin secret).' }, { status: 401 });
   if (!BASE || !KEY) return Response.json({ error: 'Airtable env vars missing.' }, { status: 500 });
@@ -96,6 +104,10 @@ export async function POST(request) {
         if (cleaned && cleaned !== t) fields['Question Title'] = cleaned;
       }
     } catch { /* non-fatal: publish still proceeds even if the rename lookup fails */ }
+  } else if (typeof body.createQuestion === 'boolean') {
+    // Toggle the "Create Question" star — flags a strong image to build a full
+    // quiz question from later. Keeps the card in the current view.
+    fields = { 'Create Question': body.createQuestion };
   } else if (typeof body.comment === 'string') {
     // Save Ali's review comment. Keep the card in the queue so it stays visible
     // until the next Claude session reads the comment, edits the card, and clears it.
