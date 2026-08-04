@@ -66,6 +66,8 @@ export async function GET(request) {
       published: Boolean(f.Published),
       needsReview: Boolean(f['Needs Review']),
       createQuestion: Boolean(f['Create Question']),
+      relatedCards: f['Related Cards'] || '',
+      linkToRheumify: Boolean(f['Link to Rheumify']),
       airtableUrl: `https://airtable.com/${BASE}/${TABLE_ID}/${rec.id}`,
     };
   });
@@ -108,6 +110,12 @@ export async function POST(request) {
     // Toggle the "Create Question" star — flags a strong image to build a full
     // quiz question from later. Keeps the card in the current view.
     fields = { 'Create Question': body.createQuestion };
+  } else if (typeof body.linkToRheumify === 'boolean') {
+    // Toggle the "Link to Rheumify" flag (cards Ali will link to FROM Rheumify).
+    fields = { 'Link to Rheumify': body.linkToRheumify };
+  } else if (typeof body.relatedCards === 'string') {
+    // Save the "Related Cards" list (Question IDs; ; , or newline separated).
+    fields = { 'Related Cards': body.relatedCards };
   } else if (typeof body.comment === 'string') {
     // Save Ali's review comment. Keep the card in the queue so it stays visible
     // until the next Claude session reads the comment, edits the card, and clears it.
