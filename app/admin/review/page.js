@@ -37,6 +37,10 @@ export default function AdminReview() {
   const [error, setError] = useState(null);
   const [replaceBusy, setReplaceBusy] = useState(null);
   const [scope, setScope] = useState('flagged');
+  const [comments, setComments] = useState({});     // id -> draft comment text
+  const [commentBusy, setCommentBusy] = useState(null);
+  const [commentSaved, setCommentSaved] = useState(null);
+  const [deleteBusy, setDeleteBusy] = useState(null);
 
   async function load(which = 'flagged') {
     setBusy(true); setError(null); setScope(which);
@@ -48,6 +52,9 @@ export default function AdminReview() {
       try { data = JSON.parse(raw); } catch { throw new Error(`Failed (${res.status}): ${raw.slice(0, 120)}`); }
       if (!res.ok) throw new Error(data.error || `Failed (${res.status})`);
       setItems(data.records);
+      // Seed the comment boxes with whatever is already saved on each record.
+      setComments(Object.fromEntries((data.records || []).map((r) => [r.id, r.reviewComment || ''])));
+      setCommentSaved(null);
     } catch (e) { setError(e.message); }
     finally { setBusy(false); }
   }
@@ -72,6 +79,45 @@ export default function AdminReview() {
       });
       if (res.ok) setItems((prev) => prev.filter((x) => x.id !== id));
     } catch { /* ignore */ }
+  }
+
+  // Save Ali's comment on a card. The card stays in the queue; the next Claude
+  // session reads the comment, edits the card, and clears it.
+  async function saveComment(id) {
+    setCommentBusy(id); setError(null); setCommentSaved(null);
+    try {
+      const res = await fetch('/api/admin/review', {
+        method: 'POST',
+        headers: { 'x-admin-secret': secret, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, comment: comments[id] ?? '' }),
+      });
+      const raw = await res.text();
+      let data; try { data = JSON.parse(raw); } catch { throw new Error(`Save failed (${res.status})`); }
+      if (!res.ok) throw new Error(data.error || `Save failed (${res.status})`);
+      // Reflect the saved value on the item so the "saved" state is accurate.
+      setItems((prev) => prev.map((x) => (x.id === id ? { ...x, reviewComment: comments[id] ?? '' } : x)));
+      setCommentSaved(id);
+    } catch (e) { setError(e.message); }
+    finally { setCommentBusy(null); }
+  }
+
+  // Permanently delete a record (and its image) from Airtable. Guarded by confirm.
+  async function deleteRecord(r) {
+    const label = r.title || r.qid || 'this record';
+    if (!window.confirm(`Permanently delete "${label}"?\n\nThis removes the record and its image from Airtable and cannot be undone.`)) return;
+    setDeleteBusy(r.id); setError(null);
+    try {
+      const res = await fetch('/api/admin/review', {
+        method: 'DELETE',
+        headers: { 'x-admin-secret': secret, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: r.id }),
+      });
+      const raw = await res.text();
+      let data; try { data = JSON.parse(raw); } catch { throw new Error(`Delete failed (${res.status})`); }
+      if (!res.ok) throw new Error(data.error || `Delete failed (${res.status})`);
+      setItems((prev) => prev.filter((x) => x.id !== r.id));
+    } catch (e) { setError(e.message); }
+    finally { setDeleteBusy(null); }
   }
 
   // Replace the image on a record by re-uploading through the existing upload
@@ -113,7 +159,8 @@ export default function AdminReview() {
         stay private to this admin screen. Use <b>Flagged</b> for records Claude marked with a question,
         or <b>All unpublished</b> to work through everything not yet live. Each record shows the image and
         its flip answer, and can be published or resolved right here, edited in Airtable, or given a
-        replacement image. Admin only.
+        replacement image. Leave a <b>comment</b> on any card and the next Claude session will read it,
+        make the edit, and clear it. <b>Delete</b> permanently removes a card. Admin only.
       </p>
 
       <div className="card" style={{ display: 'grid', gap: 12, marginBottom: 16 }}>
@@ -200,6 +247,28 @@ export default function AdminReview() {
                   </details>
                 )}
 
+                <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 8, padding: '10px 12px' }}>
+                  <div style={{ fontWeight: 700, fontSize: '.78rem', textTransform: 'uppercase', letterSpacing: '.03em', color: '#1e40af', marginBottom: 6 }}>
+                    Comment for Claude
+                  </div>
+                  <textarea
+                    value={comments[r.id] ?? ''}
+                    onChange={(e) => { setComments((p) => ({ ...p, [r.id]: e.target.value })); if (commentSaved === r.id) setCommentSaved(null); }}
+                    placeholder="e.g. This is the 4th MCP, not the 3rd. / Tighten the teaching point to the arrow only."
+                    rows={2}
+                    style={{ width: '100%', padding: 8, borderRadius: 6, border: '1.5px solid #bfdbfe', fontFamily: 'inherit', fontSize: '.9rem', resize: 'vertical' }}
+                  />
+                  <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 6 }}>
+                    <button className="btn secondary" onClick={() => saveComment(r.id)}
+                      disabled={commentBusy === r.id || (comments[r.id] ?? '') === (r.reviewComment || '')}
+                      style={{ padding: '5px 12px' }}>
+                      {commentBusy === r.id ? 'Saving…' : 'Save comment'}
+                    </button>
+                    {commentSaved === r.id && <span className="muted" style={{ fontSize: '.8rem', color: '#166534' }}>Saved ✓ Claude picks this up next session.</span>}
+                    {r.reviewComment && commentSaved !== r.id && <span className="muted" style={{ fontSize: '.8rem' }}>Comment on file — Claude will act on it.</span>}
+                  </div>
+                </div>
+
                 <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
                   {!r.published && (
                     <button className="btn" onClick={() => publish(r.id)} style={{ padding: '6px 12px' }}>
@@ -217,6 +286,10 @@ export default function AdminReview() {
                   </label>
                   <button className="btn ghost" onClick={() => resolve(r.id)} style={{ padding: '6px 12px' }}>
                     Mark resolved
+                  </button>
+                  <button onClick={() => deleteRecord(r)} disabled={deleteBusy === r.id}
+                    style={{ padding: '6px 12px', marginLeft: 'auto', border: '1.5px solid #fecaca', background: '#fef2f2', color: '#b91c1c', borderRadius: 8, fontWeight: 600, cursor: deleteBusy === r.id ? 'wait' : 'pointer' }}>
+                    {deleteBusy === r.id ? 'Deleting…' : 'Delete'}
                   </button>
                 </div>
               </div>
