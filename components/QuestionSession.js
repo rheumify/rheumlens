@@ -132,6 +132,25 @@ export default function QuestionSession({ mode = 'random', category = null, imag
     );
   }
 
+  // Resolve this card's "Related Cards" Question IDs to cards in the loaded deck
+  // (published/visible only), and render them as clickable permalinks.
+  const allByQid = {};
+  if (all) all.forEach((c) => { allByQid[c.questionId] = c; });
+  const related = (q.relatedCards || []).map((rid) => allByQid[rid]).filter(Boolean);
+  const RelatedLinks = related.length ? (
+    <div className="related-links" style={{ marginTop: 12, fontSize: '.9rem' }}>
+      <strong>Related images:</strong>{' '}
+      {related.map((rc, i) => (
+        <span key={rc.questionId}>
+          {i > 0 ? ' · ' : ''}
+          <Link href={`/card/${encodeURIComponent(rc.questionId)}`}>
+            {rc.diagnosis || rc.title.replace(/^\[(DRAFT|NEW)\]\s*/i, '') || rc.questionId}
+          </Link>
+        </span>
+      ))}
+    </div>
+  ) : null;
+
   const ProgressHeader = (
     <div>
       <div className="progress-top">
@@ -211,6 +230,7 @@ export default function QuestionSession({ mode = 'random', category = null, imag
               {q.category && <span className="chip">{q.category}</span>}
               {q.imageType && <span className="chip">{q.imageType}</span>}
             </div>
+            {RelatedLinks}
             <div className="btn-row" style={{ marginTop: 16 }}>
               <button className="btn" onClick={next}>{idx + 1 < questions.length ? 'Next image →' : 'Finish'}</button>
               {AccountActions}
@@ -263,6 +283,7 @@ export default function QuestionSession({ mode = 'random', category = null, imag
             {q.imageType && <span className="chip">{q.imageType}</span>}
             {q.difficulty && <span className="chip">{q.difficulty}</span>}
           </div>
+          {RelatedLinks}
           <div className="btn-row" style={{ marginTop: 16 }}>
             <button className="btn" onClick={next}>
               {idx + 1 < questions.length ? 'Next question →' : 'Finish'}
