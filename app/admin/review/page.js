@@ -38,6 +38,9 @@ export default function AdminReview() {
   const [replaceBusy, setReplaceBusy] = useState(null);
   const [scope, setScope] = useState('flagged');
   const [comments, setComments] = useState({});     // id -> draft comment text
+  const [relatedDraft, setRelatedDraft] = useState({}); // id -> draft "Related Cards" text
+  const [relatedBusy, setRelatedBusy] = useState(null);
+  const [copied, setCopied] = useState(null);
   const [commentBusy, setCommentBusy] = useState(null);
   const [commentSaved, setCommentSaved] = useState(null);
   const [deleteBusy, setDeleteBusy] = useState(null);
@@ -57,6 +60,7 @@ export default function AdminReview() {
       setItems(data.records);
       // Seed the comment boxes with whatever is already saved on each record.
       setComments(Object.fromEntries((data.records || []).map((r) => [r.id, r.reviewComment || ''])));
+      setRelatedDraft(Object.fromEntries((data.records || []).map((r) => [r.id, r.relatedCards || ''])));
       setCommentSaved(null);
     } catch (e) { setError(e.message); }
     finally { setBusy(false); }
@@ -122,6 +126,60 @@ export default function AdminReview() {
     }
   }
 
+  // Toggle the "Link to Rheumify" flag — cards Ali will link to FROM Rheumify
+  // (rheumify -> rheumlens only; the app never links the other way).
+  async function toggleLinkToRheumify(r, checked) {
+    setItems((prev) => prev.map((x) => (x.id === r.id ? { ...x, linkToRheumify: checked } : x)));
+    try {
+      const res = await fetch('/api/admin/review', {
+        method: 'POST',
+        headers: { 'x-admin-secret': secret, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: r.id, linkToRheumify: checked }),
+      });
+      if (!res.ok) throw new Error();
+    } catch {
+      setItems((prev) => prev.map((x) => (x.id === r.id ? { ...x, linkToRheumify: !checked } : x)));
+      setError('Could not save the "Link to Rheumify" flag — check the admin secret and try again.');
+    }
+  }
+
+  // The public permalink for a card, e.g. https://rheumlens.org/card/99-14-0043.
+  function cardUrl(r) {
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://rheumlens.org';
+    return `${origin}/card/${encodeURIComponent(r.qid)}`;
+  }
+  async function copyCardLink(r) {
+    const url = cardUrl(r);
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(r.id);
+      setTimeout(() => setCopied((c) => (c === r.id ? null : c)), 2000);
+    } catch {
+      // Clipboard blocked — surface the URL so Ali can copy it manually.
+      setError(`Copy this link manually: ${url}`);
+    }
+  }
+
+  // Save the "Related Cards" list (Question IDs) for a card.
+  async function saveRelated(id) {
+    setRelatedBusy(id); setError(null);
+    try {
+      const res = await fetch('/api/admin/review', {
+        method: 'POST',
+        headers: { 'x-admin-secret': secret, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, relatedCards: relatedDraft[id] ?? '' }),
+      });
+      if (!res.ok) throw new Error();
+      setItems((prev) => prev.map((x) => (x.id === id ? { ...x, relatedCards: relatedDraft[id] ?? '' } : x)));
+    } catch {
+      setError('Could not save Related Cards — check the admin secret and try again.');
+    } finally { setRelatedBusy(null); }
+  }
+  // Split a "Related Cards" string into Question IDs for rendering links.
+  function relatedIds(s) {
+    return String(s || '').split(/[;,\n]+/).map((x) => x.trim()).filter(Boolean);
+  }
+
   // Permanently delete a record (and its image) from Airtable. Guarded by confirm.
   async function deleteRecord(r) {
     const label = r.title || r.qid || 'this record';
@@ -182,7 +240,9 @@ export default function AdminReview() {
         its flip answer, and can be published or resolved right here, edited in Airtable, or given a
         replacement image. Leave a <b>comment</b> on any card and the next Claude session will read it,
         make the edit, and clear it. Tick <b>⭐ Create a question</b> to flag a strong image to build a
-        full question from later (pull them with <b>Load question candidates</b>). <b>Delete</b>
+        full question from later (pull them with <b>Load question candidates</b>). Link cards to each
+        other with <b>Related cards</b> (shown to learners as clickable "Related images"), flag ones you&apos;ll
+        <b> link to from Rheumify</b>, and copy a card&apos;s <b>rheumlens.org/card/…</b> permalink. <b>Delete</b>
         permanently removes a card. Admin only.
       </p>
 
@@ -308,6 +368,53 @@ export default function AdminReview() {
                     ⭐ Create a question from this image {r.createQuestion && <span className="muted" style={{ fontWeight: 400 }}>— flagged</span>}
                   </span>
                 </label>
+
+                <div style={{ background: '#faf5ff', border: '1px solid #e9d5ff', borderRadius: 8, padding: '10px 12px', display: 'grid', gap: 8 }}>
+                  <div style={{ fontWeight: 700, fontSize: '.78rem', textTransform: 'uppercase', letterSpacing: '.03em', color: '#6b21a8' }}>
+                    Related cards &amp; links
+                  </div>
+
+                  <div>
+                    <div className="muted" style={{ fontSize: '.8rem', marginBottom: 4 }}>Related cards — Question IDs, separated by ; or new lines</div>
+                    <textarea
+                      value={relatedDraft[r.id] ?? ''}
+                      onChange={(e) => setRelatedDraft((p) => ({ ...p, [r.id]: e.target.value }))}
+                      placeholder="e.g. 99-14-0044; 99-14-0045"
+                      rows={2}
+                      style={{ width: '100%', padding: 8, borderRadius: 6, border: '1.5px solid #e9d5ff', fontFamily: 'inherit', fontSize: '.9rem', resize: 'vertical' }}
+                    />
+                    <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 6, flexWrap: 'wrap' }}>
+                      <button className="btn secondary" onClick={() => saveRelated(r.id)}
+                        disabled={relatedBusy === r.id || (relatedDraft[r.id] ?? '') === (r.relatedCards || '')}
+                        style={{ padding: '5px 12px' }}>
+                        {relatedBusy === r.id ? 'Saving…' : 'Save related'}
+                      </button>
+                      {relatedIds(r.relatedCards).map((rid) => (
+                        <a key={rid} href={cardUrl({ qid: rid })}
+                          target="_blank" rel="noreferrer" style={{ ...chip, textDecoration: 'none' }}>
+                          {rid} ↗
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginTop: 2 }}>
+                    <input type="checkbox" checked={!!r.linkToRheumify}
+                      onChange={(e) => toggleLinkToRheumify(r, e.target.checked)}
+                      style={{ width: 16, height: 16 }} />
+                    <span style={{ fontWeight: 600, fontSize: '.9rem' }}>
+                      🚩 Link to Rheumify {r.linkToRheumify && <span className="muted" style={{ fontWeight: 400 }}>— flagged</span>}
+                    </span>
+                  </label>
+                  <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <button className="btn secondary" onClick={() => copyCardLink(r)} style={{ padding: '5px 12px' }}>
+                      {copied === r.id ? 'Copied ✓' : 'Copy rheumlens link'}
+                    </button>
+                    <a href={cardUrl(r)} target="_blank" rel="noreferrer" className="muted" style={{ fontSize: '.8rem' }}>
+                      {cardUrl(r)}
+                    </a>
+                  </div>
+                </div>
 
                 <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
                   {!r.published && (
