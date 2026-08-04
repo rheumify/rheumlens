@@ -12,8 +12,7 @@ export default function Home() {
           reveal the finding, and train your eye. Built on the ACR Rheumatology Image Library.
         </p>
         <div className="btn-row" style={{ justifyContent: 'center' }}>
-          <Link href="/study/session?mode=random&style=flip" className="btn">Start with flip cards →</Link>
-          <Link href="/study" className="btn secondary">Browse by topic</Link>
+          <Link href="/study" className="btn">Flip cards →</Link>
         </div>
       </section>
 
