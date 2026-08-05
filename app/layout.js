@@ -1,6 +1,7 @@
 import './globals.css';
 import Nav from '@/components/Nav';
 import { ClerkProvider } from '@clerk/nextjs';
+import { Analytics } from '@vercel/analytics/next';
 
 export const metadata = {
   title: 'RheumLens — Free Rheumatology Image Practice',
@@ -36,6 +37,7 @@ function Shell({ children }) {
           </p>
           <p className="muted">RheumLens is a free educational resource. No ads. No sign-up required.</p>
         </footer>
+        <Analytics />
       </body>
     </html>
   );
