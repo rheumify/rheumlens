@@ -6,10 +6,26 @@ import { recordAnswer, getMissedIds, markActiveToday } from '@/lib/progress';
 const PREVIEW = process.env.NEXT_PUBLIC_SHOW_DRAFTS === 'true';
 const LETTERS = ['A', 'B', 'C', 'D'];
 
+// Normalize a prop that may arrive as an array, a single string, or null.
+function asList(v) {
+  if (v == null) return [];
+  const arr = Array.isArray(v) ? v : [v];
+  return arr.map((s) => String(s).trim()).filter(Boolean);
+}
+
 // Favorites and "don't show again" are logged-in-only and stored per account
 // (server /api/progress). Answers / missed / streak stay anonymous (localStorage).
-export default function QuestionSession({ mode = 'random', category = null, imageType = null, style = 'quiz' }) {
+// category / imageType / joint each accept multiple values (OR within a dimension,
+// AND across dimensions) — e.g. imageType=['CT'] + joint=['Hip'] => CT hips.
+export default function QuestionSession({ mode = 'random', category = [], imageType = [], joint = [], style = 'quiz' }) {
   const flip = style === 'flip';
+  const cats = asList(category);
+  const types = asList(imageType);
+  const joints = asList(joint);
+  // Stable primitive keys so the load effect doesn't refire on every render
+  // (parent rebuilds these arrays from the URL each render).
+  const catKey = cats.join(','); const typeKey = types.join(','); const jointKey = joints.join(',');
+
   const [all, setAll] = useState(null);           // raw questions from the API
   const [account, setAccount] = useState({ signedIn: false, favorites: [], hidden: [], loaded: false });
   const [questions, setQuestions] = useState(null); // session deck, built once
@@ -26,14 +42,15 @@ export default function QuestionSession({ mode = 'random', category = null, imag
   // Load questions.
   useEffect(() => {
     const url = new URL('/api/questions', window.location.origin);
-    if (category) url.searchParams.set('category', category);
-    if (imageType) url.searchParams.set('imageType', imageType);
+    catKey.split(',').filter(Boolean).forEach((v) => url.searchParams.append('category', v));
+    typeKey.split(',').filter(Boolean).forEach((v) => url.searchParams.append('imageType', v));
+    jointKey.split(',').filter(Boolean).forEach((v) => url.searchParams.append('joint', v));
     if (PREVIEW) url.searchParams.set('preview', 'true');
     fetch(url)
       .then((r) => r.json())
       .then((d) => { setAll(d.questions || []); if (d.error) setError(d.error); })
       .catch((e) => setError(e.message));
-  }, [category, imageType]);
+  }, [catKey, typeKey, jointKey]);
 
   // Load per-account favorites/hidden (the server decides who's signed in).
   useEffect(() => {
@@ -75,7 +92,7 @@ export default function QuestionSession({ mode = 'random', category = null, imag
   if (!questions.length) {
     return (
       <div className="card center">
-        <p>{mode === 'favorites' ? 'No favorites yet — tap the star on a card to save it here.' : 'No questions here yet.'}</p>
+        <p>{mode === 'favorites' ? 'No favorites yet — tap the star on a card to save it here.' : 'No cards match this set yet.'}</p>
         <Link href="/study" className="btn secondary">Back to practice</Link>
       </div>
     );
@@ -229,6 +246,7 @@ export default function QuestionSession({ mode = 'random', category = null, imag
             <div className="chips">
               {q.category && <span className="chip">{q.category}</span>}
               {q.imageType && <span className="chip">{q.imageType}</span>}
+              {q.joint && <span className="chip">{q.joint}</span>}
             </div>
             {RelatedLinks}
             <div className="btn-row" style={{ marginTop: 16 }}>
@@ -281,6 +299,7 @@ export default function QuestionSession({ mode = 'random', category = null, imag
           <div className="chips">
             {q.category && <span className="chip">{q.category}</span>}
             {q.imageType && <span className="chip">{q.imageType}</span>}
+            {q.joint && <span className="chip">{q.joint}</span>}
             {q.difficulty && <span className="chip">{q.difficulty}</span>}
           </div>
           {RelatedLinks}
