@@ -37,37 +37,51 @@ function keyFromName(name) {
   return normRef(base.split('_')[0]);
 }
 
-// Parse pasted ACR info into { normalisedRef: { category, title, description } }.
-// Blocks are split on "Reference #" rather than "Category": every ACR record has
-// a Reference #, but Category is sometimes absent, and when it is, the old split
-// merged several pasted records into one block and silently kept only the first.
+// Parse pasted ACR info into { byRef, unkeyed }.
+// Newer ACR records carry a "Reference #"; the older TIF-era pages have none at
+// all and begin at "Category". Splitting on only one of those anchors merged
+// several pasted records into a single block and silently kept just the first,
+// so we anchor on either. Blocks with a reference are keyed by it; blocks
+// without one are kept in paste order for positional pairing rather than
+// discarded, which is how captions used to disappear.
 function parseInfoBlocks(text) {
   const byRef = {};
-  if (!text || !text.trim()) return byRef;
+  const unkeyed = [];
+  if (!text || !text.trim()) return { byRef, unkeyed };
   const norm = text.replace(/\r/g, '').replace(/\t/g, ': ');
 
-  const anchor = /(^|\n)(?=[^\n]*Reference\s*#)/gi;
+  const anchor = /(^|\n)(?=[^\n]*(?:Reference\s*#|Category\s*[:\t]))/gi;
   const starts = [];
   let m;
   while ((m = anchor.exec(norm)) !== null) {
     starts.push(m.index + (m[1] ? m[1].length : 0));
     anchor.lastIndex = m.index + 1;
   }
-  const chunks = starts.length
-    ? starts.map((s, i) => norm.slice(s, starts[i + 1] ?? norm.length))
+  const uniq = [...new Set(starts)].sort((a, b) => a - b);
+  const chunks = uniq.length
+    ? uniq.map((s2, i) => norm.slice(s2, uniq[i + 1] ?? norm.length))
     : [norm];
 
   for (const b of chunks) {
-    const ref = (b.match(/Reference\s*#\s*:?\s*([^\s]+)/i) || [])[1];
-    if (!ref) continue;
-    byRef[normRef(ref)] = {
-      rawRef: ref.trim(),
+    const title = (b.match(/Image\s*Title\s*:?\s*(.+)/i) || [])[1]?.trim() || '';
+    const description = (b.match(/Description\s*:?\s*([\s\S]+?)(?=\n\s*(?:Body Site|Disease\/Condition|Tissue\/Fluid Type|Image Type|Color Mode|Contributor|Category|Reference\s*#|Uploaded|File size|Dimensions|Color space|File type|Expiration date)\s*[:\t]|$)/i) || [])[1]?.trim() || '';
+    if (!title && !description) continue;
+    const block = {
       category: (b.match(/Category\s*:?\s*(.+)/i) || [])[1]?.trim() || '',
-      title: (b.match(/Image\s*Title\s*:?\s*(.+)/i) || [])[1]?.trim() || '',
-      description: (b.match(/Description\s*:?\s*([\s\S]+)/i) || [])[1]?.trim() || '',
+      title,
+      description,
     };
+    const ref = (b.match(/Reference\s*#\s*:?\s*([^\s]+)/i) || [])[1];
+    if (ref) {
+      block.rawRef = ref.trim();
+      byRef[normRef(ref)] = block;
+    } else {
+      // No Reference # on the page at all -- keep it in paste order so it can
+      // be paired positionally with the files. Never discard it.
+      unkeyed.push(block);
+    }
   }
-  return byRef;
+  return { byRef, unkeyed };
 }
 
 function mapCategory(acr) {
@@ -144,7 +158,9 @@ export async function POST(request) {
 
   const files = form.getAll('files').filter((f) => f && typeof f.arrayBuffer === 'function');
   if (!files.length) return Response.json({ error: 'No files received.' }, { status: 400 });
-  const infoByRef = parseInfoBlocks(form.get('info') || '');
+  const { byRef: infoByRef, unkeyed } = parseInfoBlocks(form.get('info') || '');
+  const unkeyedQueue = [...unkeyed];
+  const positional = [];
   const notes = (form.get('notes') || '').trim();
   const usedRefs = new Set();
 
@@ -152,8 +168,16 @@ export async function POST(request) {
   for (const file of files) {
     try {
       const key = keyFromName(file.name);
-      const block = infoByRef[key];
-      if (block) usedRefs.add(key);
+      let block = infoByRef[key];
+      let byPosition = false;
+      if (block) {
+        usedRefs.add(key);
+      } else if (unkeyedQueue.length) {
+        // Fall back to paste order for blocks ACR gave no Reference # for.
+        block = unkeyedQueue.shift();
+        byPosition = true;
+        positional.push({ qid: key, title: block.title });
+      }
       let recId = await findRecordId(key);
       let created = false;
 
@@ -170,8 +194,12 @@ export async function POST(request) {
           ...(notes ? { 'Notes': notes } : {}),
           ...(block ? {} : {
             'Needs Review': true,
-            'Claude Question': `Uploaded with no matching ACR caption block. The file was named "${file.name}" (normalised to ${key}); no pasted block carried a Reference # that resolved to it. Paste the ACR Image Title + Description for this reference.`,
+            'Claude Question': `Uploaded with no matching ACR caption block. The file was named "${file.name}" (normalised to ${key}); no pasted block carried a Reference # that resolved to it, and there was no unreferenced block left to pair with it. Paste the ACR Image Title + Description for this reference.`,
           }),
+          ...(byPosition ? {
+            'Needs Review': true,
+            'Claude Question': `Caption matched BY PASTE ORDER, not by reference number: ACR gave no Reference # for this block, so it was paired with this file because both came ${positional.length}${positional.length === 1 ? 'st' : positional.length === 2 ? 'nd' : positional.length === 3 ? 'rd' : 'th'} in their respective lists. Check the caption actually describes this image before publishing.`,
+          } : {}),
           'Credit': 'Copyright 2026 ACR',
           'Published': false,
         });
@@ -180,6 +208,10 @@ export async function POST(request) {
         const patch = {};
         if (block) patch['Source Caption'] = block.description;
         if (notes) patch['Notes'] = notes;
+        if (byPosition) {
+          patch['Needs Review'] = true;
+          patch['Claude Question'] = `Caption matched BY PASTE ORDER, not by reference number: ACR gave no Reference # for this block, so it was paired with this file by position. Check the caption actually describes this image before publishing.`;
+        }
         if (Object.keys(patch).length) await patchFields(recId, patch);
       }
 
@@ -197,6 +229,7 @@ export async function POST(request) {
       await uploadAttachment(recId, { buffer, contentType, filename });
       results.push({
         file: file.name, qid: key, status: 'attached', created, caption: !!block,
+        captionByPosition: byPosition || undefined,
       });
     } catch (e) {
       results.push({ file: file.name, status: 'error', error: e.message });
@@ -209,6 +242,8 @@ export async function POST(request) {
   const orphanBlocks = Object.entries(infoByRef)
     .filter(([k]) => !usedRefs.has(k))
     .map(([k, v]) => ({ normalised: k, asPasted: v.rawRef, title: v.title }));
+  // Reference-less blocks left over after positional pairing ran out of files.
+  const leftoverUnkeyed = unkeyedQueue.map((v) => ({ title: v.title, noReference: true }));
 
   const attached = results.filter((r) => r.status === 'attached').length;
   const createdCount = results.filter((r) => r.created).length;
@@ -221,6 +256,8 @@ export async function POST(request) {
     total: files.length,
     missingCaption,          // attached, but no caption text landed
     orphanBlocks,            // caption pasted, but no file matched it
+    leftoverUnkeyed,         // reference-less blocks with no file left to pair
+    matchedByPosition: positional,  // paired by paste order -- VERIFY THESE
     results,
   });
 }
