@@ -32,9 +32,27 @@ function normRef(raw) {
   return s;
 }
 
+function isRefLike(s) {
+  return /^\d{2}-\d{2}-\d{4}$/.test(s) || /^\d{6,8}$/.test(s);
+}
+
+// Two different ACR export shapes reach this function and they need opposite
+// treatment. Getting this wrong silently overwrites images.
+//   Ref-numbered:  "01-04-0008.jpg", "1093301_Relapsing Polychondritis.png",
+//                  "03-04-0031 (1).jpg"  -> the part before "_" is the reference.
+//   Title-named:   "Tophaceous Gout_ Hands (2).png"  -> ACR writes "_" where a
+//                  COLON belongs and reuses one disease name across several
+//                  distinct images of the same case. Splitting on "_" here
+//                  collapsed every image of a case onto one key, and because the
+//                  route clears the Image field before attaching, each upload
+//                  overwrote the previous one. The whole basename is the identity.
+//                  The trailing " (2)" must be kept for the same reason -- those
+//                  are different images, not Finder duplicates.
 function keyFromName(name) {
-  const base = name.replace(/\.[^.]+$/, '');
-  return normRef(base.split('_')[0]);
+  const base = name.replace(/\.[^.]+$/, '').trim();
+  const head = normRef(base.split('_')[0]);
+  if (isRefLike(head)) return head;
+  return base.replace(/_\s*/g, ': ').replace(/\s+/g, ' ').trim();
 }
 
 // Parse pasted ACR info into { byRef, unkeyed }.
@@ -86,11 +104,12 @@ function parseInfoBlocks(text) {
 
 function mapCategory(acr) {
   const s = (acr || '').toLowerCase();
-  if (s.includes('crystal')) return 'Crystal';
+  if (s.includes('crystal') || s.includes('gout')) return 'Crystal';
   if (s.includes('rheumatoid')) return 'RA';
   if (s.includes('lupus')) return 'SLE';
-  if (s.includes('vasculit')) return 'Vasculitis';
-  if (s.includes('myositis') || s.includes('myopath')) return 'Myositis';
+  if (s.includes('vasculit') || s.includes('behcet') || s.includes('behçet') ||
+      s.includes('polyarteritis') || s.includes('kawasaki')) return 'Vasculitis';
+  if (s.includes('myositis') || s.includes('myopath') || s.includes('dermatomyositis')) return 'Myositis';
   if (s.includes('scleros') || s.includes('scleroderma')) return 'Scleroderma';
   if (s.includes('sjogren') || s.includes('sjögren')) return 'Sjogrens';
   if (s.includes('spondyl')) return 'Spondyloarthritis';
@@ -106,7 +125,7 @@ function mapCategory(acr) {
 async function findRecordId(key) {
   for (const field of ['Question ID', 'ACR Ref #']) {
     const url = new URL(`https://api.airtable.com/v0/${BASE}/${encodeURIComponent(TABLE)}`);
-    url.searchParams.set('filterByFormula', `{${field}} = '${key}'`);
+    url.searchParams.set('filterByFormula', `{${field}} = '${key.replace(/'/g, "\\'")}'`);
     url.searchParams.set('maxRecords', '1');
     const res = await fetch(url, { headers: { Authorization: `Bearer ${KEY}` }, cache: 'no-store' });
     if (!res.ok) continue;
@@ -163,11 +182,24 @@ export async function POST(request) {
   const positional = [];
   const notes = (form.get('notes') || '').trim();
   const usedRefs = new Set();
+  const seenKeys = new Set();
 
   const results = [];
   for (const file of files) {
     try {
       const key = keyFromName(file.name);
+
+      // Two files in one batch resolving to the same key means the second would
+      // overwrite the first. Never let that happen silently again.
+      if (seenKeys.has(key)) {
+        results.push({
+          file: file.name, qid: key, status: 'duplicate-key-skipped',
+          note: 'Another file in this batch already claimed this key; skipped so it would not overwrite that image. Rename one of them and re-upload.',
+        });
+        continue;
+      }
+      seenKeys.add(key);
+
       let block = infoByRef[key];
       let byPosition = false;
       if (block) {
@@ -189,7 +221,7 @@ export async function POST(request) {
           'Question ID': key,
           'ACR Ref #': key,
           'Question Title': block?.title ? `[NEW] ${block.title}` : `[NEEDS CAPTION] ${key}`,
-          'Category': mapCategory(block?.category),
+          'Category': mapCategory(block?.category || key),
           'Source Caption': block?.description || '',
           ...(notes ? { 'Notes': notes } : {}),
           ...(block ? {} : {
@@ -198,7 +230,7 @@ export async function POST(request) {
           }),
           ...(byPosition ? {
             'Needs Review': true,
-            'Claude Question': `Caption matched BY PASTE ORDER, not by reference number: ACR gave no Reference # for this block, so it was paired with this file because both came ${positional.length}${positional.length === 1 ? 'st' : positional.length === 2 ? 'nd' : positional.length === 3 ? 'rd' : 'th'} in their respective lists. Check the caption actually describes this image before publishing.`,
+            'Claude Question': `Caption matched BY PASTE ORDER, not by reference number: ACR gave no Reference # for this block, so it was paired with this file by position. Check the caption actually describes this image before publishing.`,
           } : {}),
           'Credit': 'Copyright 2026 ACR',
           'Published': false,
@@ -249,6 +281,8 @@ export async function POST(request) {
   const createdCount = results.filter((r) => r.created).length;
   const missingCaption = results.filter((r) => r.status === 'attached' && !r.caption)
     .map((r) => r.qid);
+  const duplicateKeys = results.filter((r) => r.status === 'duplicate-key-skipped')
+    .map((r) => r.file);
 
   return Response.json({
     attached,
@@ -258,6 +292,7 @@ export async function POST(request) {
     orphanBlocks,            // caption pasted, but no file matched it
     leftoverUnkeyed,         // reference-less blocks with no file left to pair
     matchedByPosition: positional,  // paired by paste order -- VERIFY THESE
+    duplicateKeys,           // skipped rather than overwrite a sibling image
     results,
   });
 }
