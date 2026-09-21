@@ -1,4 +1,4 @@
-import { getQuestions } from '@/lib/airtable';
+import { getQuestionById } from '@/lib/airtable';
 
 // Server layout that gives each /card/<qid> permalink its own <title>,
 // description, canonical URL, and social-preview image. The page itself stays
@@ -23,8 +23,7 @@ export async function generateMetadata({ params }) {
   const canonical = `${SITE}/card/${encoded}`;
   const imageProxy = `${SITE}/card/${encoded}/image`;
   try {
-    const qs = await getQuestions();
-    const q = qs.find((c) => c.questionId === qid);
+    const q = await getQuestionById(qid);
     if (!q) {
       return { title: 'Card not found — RheumLens', robots: { index: false } };
     }
