@@ -1,9 +1,14 @@
 import { getQuestions } from '@/lib/airtable';
 
 // Server layout that gives each /card/<qid> permalink its own <title>,
-// description, and canonical URL. The page itself stays a client component;
-// this only adds head metadata so search results don't show the generic
-// site title for every card. Falls back to the site defaults on any error.
+// description, canonical URL, and social-preview image. The page itself stays
+// a client component; this only adds head metadata so search results don't
+// show the generic site title for every card. Falls back to the site defaults
+// on any error.
+//
+// Preview images point at /card/<qid>/image (a stable proxy) rather than the
+// raw Airtable attachment URL, which expires after a few hours and would break
+// cached previews on Substack / X / LinkedIn / Slack.
 
 const SITE = 'https://rheumlens.org';
 
@@ -14,7 +19,9 @@ function stripTag(s) {
 export async function generateMetadata({ params }) {
   const { qid: raw } = await params;
   const qid = decodeURIComponent(raw || '');
-  const canonical = `${SITE}/card/${encodeURIComponent(qid)}`;
+  const encoded = encodeURIComponent(qid);
+  const canonical = `${SITE}/card/${encoded}`;
+  const imageProxy = `${SITE}/card/${encoded}/image`;
   try {
     const qs = await getQuestions();
     const q = qs.find((c) => c.questionId === qid);
@@ -26,6 +33,7 @@ export async function generateMetadata({ params }) {
     const description = q.teachingPoint
       ? q.teachingPoint.slice(0, 155)
       : `${name}${bits ? ` (${bits})` : ''} — a rheumatology image flip card from RheumLens, a free image-based question bank.`;
+    const images = q.imageUrl ? [{ url: imageProxy, alt: q.imageAlt || name }] : [];
     return {
       title: `${name}${q.imageType ? ` — ${q.imageType}` : ''} | RheumLens`,
       description,
@@ -36,7 +44,13 @@ export async function generateMetadata({ params }) {
         url: canonical,
         siteName: 'RheumLens',
         type: 'article',
-        ...(q.imageUrl ? { images: [{ url: q.imageUrl, alt: q.imageAlt || name }] } : {}),
+        images,
+      },
+      twitter: {
+        card: images.length ? 'summary_large_image' : 'summary',
+        title: `${name} | RheumLens`,
+        description,
+        images: images.map((i) => i.url),
       },
     };
   } catch {
