@@ -1,4 +1,4 @@
-import { getQuestions } from '@/lib/airtable';
+import { getQuestionById } from '@/lib/airtable';
 
 // Stable, non-expiring image URL for a published card: /card/<Question ID>/image
 // Airtable attachment URLs rotate every few hours, so anything that caches a
@@ -17,8 +17,7 @@ export async function GET(_request, { params }) {
 
   let q;
   try {
-    const qs = await getQuestions();
-    q = qs.find((c) => c.questionId === qid);
+    q = await getQuestionById(qid);
   } catch {
     return new Response('Upstream error', { status: 502 });
   }
