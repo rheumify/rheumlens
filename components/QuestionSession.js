@@ -1,11 +1,19 @@
 'use client';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { recordAnswer, recordSelfRating, getMissedIds, markActiveToday, mergeServerRows } from '@/lib/progress';
+import { recordAnswer, recordSeen, recordSelfRating, getMissedIds, getSeenIds, markActiveToday, mergeServerRows } from '@/lib/progress';
 import ReportIssue from '@/components/ReportIssue';
 
 const PREVIEW = process.env.NEXT_PUBLIC_SHOW_DRAFTS === 'true';
 const LETTERS = ['A', 'B', 'C', 'D'];
+
+// What an empty deck means depends on which deck you asked for.
+const EMPTY_COPY = {
+  favorites: 'No favorites yet — tap the star on a card to save it here.',
+  seen: "You haven't been through any images yet. Start a random mix and they'll collect here.",
+  new: "You've seen every image in this set. Try Review misses, or pick another topic.",
+  missed: 'Nothing to review — you haven\'t marked any image "review again" yet.',
+};
 
 // Normalize a prop that may arrive as an array, a single string, or null.
 function asList(v) {
@@ -93,6 +101,14 @@ export default function QuestionSession({ mode = 'random', category = [], imageT
     } else if (mode === 'missed') {
       const ids = new Set(getMissedIds());
       qs = qs.filter((q) => ids.has(q.questionId));
+    } else if (mode === 'seen') {
+      const ids = new Set(getSeenIds());
+      qs = qs.filter((q) => ids.has(q.questionId));
+    } else if (mode === 'new') {
+      // Images this learner has never been shown. Server rows were merged above,
+      // so on a signed-in account this is "new to me", not "new on this device".
+      const ids = new Set(getSeenIds());
+      qs = qs.filter((q) => !ids.has(q.questionId));
     }
     setQuestions(qs);
   }, [all, account, hydrated, questions, mode]);
@@ -106,7 +122,7 @@ export default function QuestionSession({ mode = 'random', category = [], imageT
   if (!questions.length) {
     return (
       <div className="card center">
-        <p>{mode === 'favorites' ? 'No favorites yet — tap the star on a card to save it here.' : 'No cards match this set yet.'}</p>
+        <p>{EMPTY_COPY[mode] || 'No cards match this set yet.'}</p>
         <Link href="/study" className="btn secondary">Back to practice</Link>
       </div>
     );
@@ -292,7 +308,7 @@ export default function QuestionSession({ mode = 'random', category = [], imageT
             </div>
           </div>
         ) : (
-          <button className="btn" onClick={() => setRevealed(true)}>Reveal finding</button>
+          <button className="btn" onClick={() => { setRevealed(true); recordSeen(q.questionId); }}>Reveal finding</button>
         )}
         {Zoom}
       </div>
