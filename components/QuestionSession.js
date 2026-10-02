@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { recordAnswer, getMissedIds, markActiveToday } from '@/lib/progress';
+import { recordAnswer, recordSelfRating, getMissedIds, markActiveToday, mergeServerRows } from '@/lib/progress';
 import ReportIssue from '@/components/ReportIssue';
 
 const PREVIEW = process.env.NEXT_PUBLIC_SHOW_DRAFTS === 'true';
@@ -15,7 +15,8 @@ function asList(v) {
 }
 
 // Favorites and "don't show again" are logged-in-only and stored per account
-// (server /api/progress). Answers / missed / streak stay anonymous (localStorage).
+// (server /api/progress). Card-level progress is kept in localStorage for
+// everyone and mirrored to the account for signed-in users (/api/progress/record).
 // category / imageType / joint each accept multiple values (OR within a dimension,
 // AND across dimensions) — e.g. imageType=['CT'] + joint=['Hip'] => CT hips.
 export default function QuestionSession({ mode = 'random', category = [], imageType = [], joint = [], style = 'quiz' }) {
@@ -29,6 +30,7 @@ export default function QuestionSession({ mode = 'random', category = [], imageT
 
   const [all, setAll] = useState(null);           // raw questions from the API
   const [account, setAccount] = useState({ signedIn: false, favorites: [], hidden: [], loaded: false });
+  const [hydrated, setHydrated] = useState(false); // server progress merged into local
   const [questions, setQuestions] = useState(null); // session deck, built once
   const [error, setError] = useState(null);
   const [idx, setIdx] = useState(0);
@@ -61,10 +63,21 @@ export default function QuestionSession({ mode = 'random', category = [], imageT
       .catch(() => setAccount((a) => ({ ...a, loaded: true })));
   }, []);
 
-  // Build the session deck ONCE, after both questions and account are ready, so
-  // favoriting/hiding mid-session doesn't reshuffle the current run.
+  // Pull this account's saved card progress and merge it into local storage
+  // BEFORE the deck is built, so "Review misses" is populated on a new device.
+  // Signed out, or on any failure, this resolves immediately and changes nothing.
   useEffect(() => {
-    if (questions || !all || !account.loaded) return;
+    fetch('/api/progress/record')
+      .then((r) => r.json())
+      .then((d) => { if (d.signedIn && d.rows) mergeServerRows(d.rows); })
+      .catch(() => {})
+      .finally(() => setHydrated(true));
+  }, []);
+
+  // Build the session deck ONCE, after questions, account and saved progress are
+  // ready, so favoriting/hiding mid-session doesn't reshuffle the current run.
+  useEffect(() => {
+    if (questions || !all || !account.loaded || !hydrated) return;
     let qs = all;
     if (account.signedIn && account.hidden.length) {
       const h = new Set(account.hidden);
@@ -82,7 +95,7 @@ export default function QuestionSession({ mode = 'random', category = [], imageT
       qs = qs.filter((q) => ids.has(q.questionId));
     }
     setQuestions(qs);
-  }, [all, account, questions, mode]);
+  }, [all, account, hydrated, questions, mode]);
 
   const q = questions && questions[idx];
   const signedIn = account.signedIn;
@@ -128,6 +141,11 @@ export default function QuestionSession({ mode = 'random', category = [], imageT
     setPicked(letter);
     recordAnswer(q.questionId, letter === q.correct);
   }
+  // Flip mode: the learner grades themselves, and that grade is what gets saved.
+  function rate(knewIt) {
+    recordSelfRating(q.questionId, knewIt);
+    next();
+  }
   function next() {
     setPicked(null);
     setRevealed(false);
@@ -142,6 +160,11 @@ export default function QuestionSession({ mode = 'random', category = [], imageT
       <div className="card center">
         <h2>{flip ? 'Done flipping 🎉' : 'Set complete 🎉'}</h2>
         <p className="muted">You went through {questions.length} image{questions.length > 1 ? 's' : ''}.</p>
+        {!signedIn && (
+          <p className="muted" style={{ fontSize: '.85rem' }}>
+            Sign in to keep this progress across your devices — it&apos;s free.
+          </p>
+        )}
         <div className="btn-row" style={{ justifyContent: 'center' }}>
           <button className="btn" onClick={() => { setIdx(0); setPicked(null); setRevealed(false); }}>Restart</button>
           <Link href="/study" className="btn secondary">Choose another set</Link>
@@ -236,8 +259,9 @@ export default function QuestionSession({ mode = 'random', category = [], imageT
     </>
   ) : null;
 
-  // ---------- FLIP MODE: image -> reveal finding -> next ----------
+  // ---------- FLIP MODE: image -> reveal finding -> self-rate -> next ----------
   if (flip) {
+    const last = idx + 1 >= questions.length;
     return (
       <div className="q-wrap">
         {ProgressHeader}
@@ -253,8 +277,18 @@ export default function QuestionSession({ mode = 'random', category = [], imageT
             </div>
             {RelatedLinks}
             <div className="btn-row" style={{ marginTop: 16 }}>
-              <button className="btn" onClick={next}>{idx + 1 < questions.length ? 'Next image →' : 'Finish'}</button>
+              <button className="btn" onClick={() => rate(true)}>
+                {last ? 'I knew this · Finish' : 'I knew this'}
+              </button>
+              <button className="btn secondary" onClick={() => rate(false)}>
+                {last ? 'Review again · Finish' : 'Review again'}
+              </button>
               {AccountActions}
+            </div>
+            <div className="muted" style={{ fontSize: '.78rem', marginTop: 8 }}>
+              {signedIn
+                ? 'Saved to your account — anything you mark "review again" comes back in Review misses.'
+                : 'Saved in this browser. Sign in to keep it across your devices.'}
             </div>
           </div>
         ) : (
