@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { recordAnswer, getMissedIds, markActiveToday } from '@/lib/progress';
+import ReportIssue from '@/components/ReportIssue';
 
 const PREVIEW = process.env.NEXT_PUBLIC_SHOW_DRAFTS === 'true';
 const LETTERS = ['A', 'B', 'C', 'D'];
@@ -192,6 +193,8 @@ export default function QuestionSession({ mode = 'random', category = [], imageT
         {q.credit}
         {q.acrRef && <> · ACR ref <strong>{q.acrRef}</strong></>} · tap image to zoom
       </div>
+      {/* Keyed by card so the form resets when the deck advances. */}
+      <ReportIssue key={q.questionId} questionId={q.questionId} title={q.title} recordId={q.id} />
     </div>
   ) : (
     <div className="q-image-missing">
