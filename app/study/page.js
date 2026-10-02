@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { getStats } from '@/lib/progress';
+import { getStats, getSeenIds, mergeServerRows } from '@/lib/progress';
 
 const PREVIEW = process.env.NEXT_PUBLIC_SHOW_DRAFTS === 'true';
 // Questions (quiz mode) are held back for the flip-cards-first launch.
@@ -26,10 +26,12 @@ export default function StudyHub() {
   const [stats, setStats] = useState(null);
   const [style, setStyle] = useState('flip');
   const [signedIn, setSignedIn] = useState(false);
+  const [seenIds, setSeenIds] = useState([]);
   const [sel, setSel] = useState({ category: [], imageType: [], joint: [] });
 
   useEffect(() => {
     setStats(getStats());
+    setSeenIds(getSeenIds());
     const url = new URL('/api/questions', window.location.origin);
     if (PREVIEW) url.searchParams.set('preview', 'true');
     fetch(url)
@@ -40,6 +42,13 @@ export default function StudyHub() {
       .then((r) => r.json())
       .then((d) => setSignedIn(!!d.signedIn))
       .catch(() => {});
+    // Pull saved progress for a signed-in account and fold it into the local
+    // store, so these counts describe the person rather than the browser.
+    fetch('/api/progress/record')
+      .then((r) => r.json())
+      .then((d) => { if (d.signedIn && d.rows) mergeServerRows(d.rows); })
+      .catch(() => {})
+      .finally(() => { setStats(getStats()); setSeenIds(getSeenIds()); });
   }, []);
 
   // Cards matching the current selection: OR within a dimension, AND across dimensions.
@@ -77,6 +86,15 @@ export default function StudyHub() {
 
   const anySel = sel.category.length + sel.imageType.length + sel.joint.length > 0;
   const total = (cards || []).length;
+
+  // Split the published deck into images this learner has met and images they
+  // haven't. Counted against the live deck, so cards added since their last
+  // visit show up as new.
+  const { newCount, seenCount } = useMemo(() => {
+    const seen = new Set(seenIds);
+    const n = (cards || []).filter((c) => !seen.has(c.questionId)).length;
+    return { newCount: n, seenCount: (cards || []).length - n };
+  }, [cards, seenIds]);
 
   function toggle(dim, name) {
     setSel((s) => {
@@ -138,9 +156,11 @@ export default function StudyHub() {
       </p>
       {Toggle}
 
-      {stats && stats.streak > 0 && (
+      {stats && (stats.streak > 0 || stats.seen > 0) && (
         <p className="muted" style={{ marginTop: 10 }}>
-          🔥 {stats.streak}-day streak
+          {stats.streak > 0 && <>🔥 {stats.streak}-day streak</>}
+          {stats.streak > 0 && stats.seen > 0 && ' · '}
+          {stats.seen > 0 && total > 0 && <>{stats.seen} of {total} images seen</>}
         </p>
       )}
 
@@ -152,11 +172,31 @@ export default function StudyHub() {
           <Link href={q('mode=random')} className="choice">
             <span>Random mix</span><span className="count-badge">{total || '—'}</span>
           </Link>
-          <Link href={q('mode=missed')} className="choice"><span>Missed questions</span><span>↻</span></Link>
-          {signedIn && (
-            <Link href={q('mode=favorites')} className="choice"><span>Favorites ★</span><span>›</span></Link>
+          <Link href={q('mode=new')} className="choice">
+            <span>New to me</span><span className="count-badge">{cards ? newCount : '—'}</span>
+          </Link>
+          <Link href={q('mode=seen')} className="choice">
+            <span>Seen before</span><span className="count-badge">{cards ? seenCount : '—'}</span>
+          </Link>
+          <Link href={q('mode=missed')} className="choice">
+            <span>Review misses</span><span className="count-badge">{stats ? stats.missed : '—'}</span>
+          </Link>
+          {signedIn ? (
+            <Link href={q('mode=favorites')} className="choice">
+              <span>Favorites ★</span><span className="count-badge">{stats ? stats.favorites : '—'}</span>
+            </Link>
+          ) : (
+            <span className="choice" style={{ opacity: 0.55, cursor: 'default' }}
+              title="Favorites are saved to your account">
+              <span>Favorites ★</span><span style={{ fontSize: '.78rem' }}>sign in</span>
+            </span>
           )}
         </div>
+        {!signedIn && (
+          <p className="muted" style={{ fontSize: '.82rem', margin: '10px 0 0' }}>
+            Your progress is saved in this browser. Sign in — it&apos;s free — to keep it across your devices.
+          </p>
+        )}
       </div>
 
       <div className="card" style={{ marginTop: 16 }}>
