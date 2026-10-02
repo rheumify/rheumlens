@@ -17,6 +17,10 @@ function authed(request) {
 //                        so nothing goes live to users until it's reviewed here.
 //   ?scope=questions   → records with "Create Question" checked (good images Ali
 //                        flagged to build a full quiz question from later).
+//   ?scope=proposed    → the subset of those that already have a DRAFTED question
+//                        (Clinical Stem filled in). These render on /admin/questions,
+//                        which shows the stem, options, answer and explanation —
+//                        /admin/review only ever shows the flip-card side.
 export async function GET(request) {
   if (!authed(request)) return Response.json({ error: 'Unauthorized (bad or missing admin secret).' }, { status: 401 });
   if (!BASE || !KEY) return Response.json({ error: 'Airtable env vars missing.' }, { status: 500 });
@@ -25,6 +29,7 @@ export async function GET(request) {
   const filterFormula =
     scope === 'all' ? 'NOT({Published})'
     : scope === 'questions' ? '{Create Question}'
+    : scope === 'proposed' ? "AND({Create Question}, {Clinical Stem} != '')"
     : '{Needs Review}';
 
   const records = [];
@@ -62,6 +67,17 @@ export async function GET(request) {
       notes: f.Notes || '',
       reviewComment: f['Review Comment'] || '',
       sourceCaption: f['Source Caption'] || '',
+      // The drafted quiz question. Empty on most records; populated once Claude
+      // has written one. /admin/questions renders these.
+      stem: f['Clinical Stem'] || '',
+      leadIn: f['Lead-in'] || '',
+      optionA: f['Option A'] || '',
+      optionB: f['Option B'] || '',
+      optionC: f['Option C'] || '',
+      optionD: f['Option D'] || '',
+      correctAnswer: f['Correct Answer'] || '',
+      explanation: f['Explanation'] || '',
+      mnemonic: f['Mnemonic'] || '',
       image,
       published: Boolean(f.Published),
       needsReview: Boolean(f['Needs Review']),
