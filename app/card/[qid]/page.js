@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { markActiveToday } from '@/lib/progress';
+import ReportIssue from '@/components/ReportIssue';
 
 // Per-card permalink: /card/<Question ID>. A stable, shareable link to a single
 // flip card — used for "Related images" navigation between cards and as the
@@ -56,6 +57,7 @@ export default function CardPermalink() {
               {q.credit}
               {q.acrRef && <> · ACR ref <strong>{q.acrRef}</strong></>} · tap image to zoom
             </div>
+            <ReportIssue questionId={q.questionId} title={q.title} recordId={q.id} />
           </div>
         ) : (
           <div className="q-image-missing">Image not yet attached for this card.</div>
