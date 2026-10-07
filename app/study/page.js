@@ -4,8 +4,16 @@ import Link from 'next/link';
 import { getStats, getSeenIds, mergeServerRows } from '@/lib/progress';
 
 const PREVIEW = process.env.NEXT_PUBLIC_SHOW_DRAFTS === 'true';
-// Questions (quiz mode) are held back for the flip-cards-first launch.
-const QUIZ_ENABLED = false;
+// Quiz mode is live (7 Oct 2026).
+const QUIZ_ENABLED = true;
+
+// Only cards carrying a keyed answer and all four options can appear in a quiz,
+// so every count on this page is taken against the deck for the chosen style.
+function hasQuestion(c) {
+  return Boolean(
+    c.correct && c.options && c.options.A && c.options.B && c.options.C && c.options.D
+  );
+}
 
 // Order the joint chips anatomically (head-to-toe) rather than alphabetically.
 const JOINT_ORDER = [
@@ -51,13 +59,20 @@ export default function StudyHub() {
       .finally(() => { setStats(getStats()); setSeenIds(getSeenIds()); });
   }, []);
 
+  // The deck for the chosen style: flip can use the whole published library,
+  // quiz only the cards that have a written question.
+  const deck = useMemo(() => {
+    const list = cards || [];
+    return style === 'quiz' ? list.filter(hasQuestion) : list;
+  }, [cards, style]);
+
   // Cards matching the current selection: OR within a dimension, AND across dimensions.
   const inSel = (val, list) => list.length === 0 || list.includes(val);
   const matched = useMemo(
-    () => (cards || []).filter(
+    () => deck.filter(
       (c) => inSel(c.category, sel.category) && inSel(c.imageType, sel.imageType) && inSel(c.joint, sel.joint)
     ),
-    [cards, sel]
+    [deck, sel]
   );
 
   // Facet options + counts. Each option's count reflects the OTHER selected
@@ -65,7 +80,7 @@ export default function StudyHub() {
   const facets = useMemo(() => {
     const out = {};
     for (const { key } of DIMS) {
-      const others = (cards || []).filter((c) =>
+      const others = deck.filter((c) =>
         DIMS.every(({ key: k }) => (k === key ? true : inSel(c[k], sel[k])))
       );
       const m = {};
@@ -82,19 +97,21 @@ export default function StudyHub() {
       out[key] = opts;
     }
     return out;
-  }, [cards, sel]);
+  }, [deck, sel]);
 
   const anySel = sel.category.length + sel.imageType.length + sel.joint.length > 0;
-  const total = (cards || []).length;
+  const total = deck.length;
+  // "N of M images seen" is about the library, not the current style's subset.
+  const libraryTotal = (cards || []).length;
 
   // Split the published deck into images this learner has met and images they
   // haven't. Counted against the live deck, so cards added since their last
   // visit show up as new.
   const { newCount, seenCount } = useMemo(() => {
     const seen = new Set(seenIds);
-    const n = (cards || []).filter((c) => !seen.has(c.questionId)).length;
-    return { newCount: n, seenCount: (cards || []).length - n };
-  }, [cards, seenIds]);
+    const n = deck.filter((c) => !seen.has(c.questionId)).length;
+    return { newCount: n, seenCount: deck.length - n };
+  }, [deck, seenIds]);
 
   function toggle(dim, name) {
     setSel((s) => {
@@ -160,7 +177,7 @@ export default function StudyHub() {
         <p className="muted" style={{ marginTop: 10 }}>
           {stats.streak > 0 && <>🔥 {stats.streak}-day streak</>}
           {stats.streak > 0 && stats.seen > 0 && ' · '}
-          {stats.seen > 0 && total > 0 && <>{stats.seen} of {total} images seen</>}
+          {stats.seen > 0 && libraryTotal > 0 && <>{stats.seen} of {libraryTotal} images seen</>}
         </p>
       )}
 
