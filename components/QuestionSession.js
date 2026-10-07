@@ -22,10 +22,12 @@ function asList(v) {
   return arr.map((s) => String(s).trim()).filter(Boolean);
 }
 
-// A card is quiz-ready only if it carries a keyed answer and all four options.
-// Most of the library is flip-only, so quiz decks are filtered down to these.
+// A card is quiz-ready only if Ali has ticked "Question Live" after reviewing the
+// drafted question, AND it carries a keyed answer and all four options. A drafted
+// but unreviewed question never reaches a learner; the card still works as a flip card.
 function hasQuestion(c) {
   return Boolean(
+    c.questionLive &&
     c.correct && c.options && c.options.A && c.options.B && c.options.C && c.options.D
   );
 }
