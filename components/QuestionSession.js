@@ -22,6 +22,14 @@ function asList(v) {
   return arr.map((s) => String(s).trim()).filter(Boolean);
 }
 
+// A card is quiz-ready only if it carries a keyed answer and all four options.
+// Most of the library is flip-only, so quiz decks are filtered down to these.
+function hasQuestion(c) {
+  return Boolean(
+    c.correct && c.options && c.options.A && c.options.B && c.options.C && c.options.D
+  );
+}
+
 // Favorites and "don't show again" are logged-in-only and stored per account
 // (server /api/progress). Card-level progress is kept in localStorage for
 // everyone and mirrored to the account for signed-in users (/api/progress/record).
@@ -86,7 +94,9 @@ export default function QuestionSession({ mode = 'random', category = [], imageT
   // ready, so favoriting/hiding mid-session doesn't reshuffle the current run.
   useEffect(() => {
     if (questions || !all || !account.loaded || !hydrated) return;
-    let qs = all;
+    // Quiz mode: drop every card without a written question before any other filter,
+    // so the mode/favorite counts below describe the deck the learner actually gets.
+    let qs = flip ? all : all.filter(hasQuestion);
     if (account.signedIn && account.hidden.length) {
       const h = new Set(account.hidden);
       qs = qs.filter((q) => !h.has(q.questionId));
@@ -111,7 +121,7 @@ export default function QuestionSession({ mode = 'random', category = [], imageT
       qs = qs.filter((q) => !ids.has(q.questionId));
     }
     setQuestions(qs);
-  }, [all, account, hydrated, questions, mode]);
+  }, [all, account, hydrated, questions, mode, flip]);
 
   const q = questions && questions[idx];
   const signedIn = account.signedIn;
@@ -222,11 +232,17 @@ export default function QuestionSession({ mode = 'random', category = [], imageT
     </div>
   );
 
+  // The Image Alt Text field often names the diagnosis, so it is withheld until
+  // the learner has committed — otherwise the answer is readable from the DOM,
+  // from a screen reader, or from a broken-image placeholder.
+  const identityShown = flip ? revealed : !!picked;
+  const safeAlt = identityShown ? (q.imageAlt || 'Clinical image') : 'Clinical image';
+
   const Image = q.imageUrl ? (
     <div>
       <div className="q-image" onClick={() => setZoom(true)}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={q.imageUrl} alt={q.imageAlt || 'Clinical image'} />
+        <img src={q.imageUrl} alt={safeAlt} />
       </div>
       <div className="credit">
         {q.credit}
@@ -251,7 +267,7 @@ export default function QuestionSession({ mode = 'random', category = [], imageT
           border: 'none', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: '.95rem' }}>✕ Close</button>
       <div style={{ minHeight: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={q.imageUrl} alt={q.imageAlt || ''}
+        <img src={q.imageUrl} alt={identityShown ? (q.imageAlt || '') : ''}
           onClick={(e) => { e.stopPropagation(); setZNatural((n) => !n); }}
           style={{ display: 'block',
             maxWidth: zNatural ? 'none' : '100%',
@@ -320,10 +336,13 @@ export default function QuestionSession({ mode = 'random', category = [], imageT
   return (
     <div className="q-wrap">
       {ProgressHeader}
-      {Image}
 
+      {/* Stem and lead-in come BEFORE the image: the learner should know what is
+          being asked before they start reading the picture. */}
       {q.stem && <p className="stem">{q.stem}</p>}
       {q.leadIn && <p className="lead-in">{q.leadIn}</p>}
+
+      {Image}
 
       <div className="options">
         {LETTERS.map((L) => {
