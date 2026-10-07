@@ -20,7 +20,11 @@ const IMAGE_FIELD_ID = process.env.AIRTABLE_IMAGE_FIELD_ID || 'fldjxwnR3yTcKTloE
 function normRef(raw) {
   if (!raw) return '';
   let s = String(raw).trim();
-  s = s.replace(/\s*\(\d+\)\s*$/, '').trim();      // Finder duplicate suffix
+  // Finder duplicate suffixes, however many deep: downloading the same file
+  // three times gives "99-12-0040 (1) (1).jpg". Stripping only one left the
+  // name un-parseable as a reference, so it created a second record instead of
+  // replacing the image on the first.
+  s = s.replace(/(\s*\(\d+\))+\s*$/, '').trim();
   const parts = s.split(/[/\-_.\s]+/).filter(Boolean);
   if (parts.length === 3 && parts.every((p) => /^\d+$/.test(p))) {
     const [a, b, c] = parts;
@@ -71,6 +75,14 @@ function keyFromName(name) {
 // unkeyed block. Text the user typed is never thrown away.
 const LABEL_LINE = /^\s*(?:Category|Reference\s*#|Body Site|Disease\/Condition|Tissue\/Fluid Type|Image Type|Color Mode|Contributor|Uploaded|File size|Dimensions|Color space|File type|Expiration date)\s*[:\t]/i;
 
+// A caption is a sentence, not a stray word. Page furniture copied along with
+// the text ("Asset", "Download", a lone date) was being written into Source
+// Caption as though it described the image, so a paragraph has to look like
+// prose before it is treated as one.
+function looksLikeCaption(text) {
+  return text.length >= 25 && text.split(/\s+/).length >= 5;
+}
+
 function blocksFromRawPaste(text) {
   return text
     .split(/\n\s*\n/)
@@ -81,7 +93,7 @@ function blocksFromRawPaste(text) {
         .join('\n')
         .trim()
     )
-    .filter(Boolean)
+    .filter(looksLikeCaption)
     .map((description) => ({ category: '', title: '', description, fromRawPaste: true }));
 }
 
