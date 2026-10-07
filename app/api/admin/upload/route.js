@@ -55,17 +55,40 @@ function keyFromName(name) {
   return base.replace(/_\s*/g, ': ').replace(/\s+/g, ' ').trim();
 }
 
-// Parse pasted ACR info into { byRef, unkeyed }.
+// Parse pasted ACR info into { byRef, unkeyed, rawPaste }.
 // Newer ACR records carry a "Reference #"; the older TIF-era pages have none at
 // all and begin at "Category". Splitting on only one of those anchors merged
 // several pasted records into a single block and silently kept just the first,
 // so we anchor on either. Blocks with a reference are keyed by it; blocks
 // without one are kept in paste order for positional pairing rather than
 // discarded, which is how captions used to disappear.
+//
+// The other way captions used to disappear: text that is not shaped like an ACR
+// block at all. Images from outside the ACR library get described in plain prose,
+// and a paste with no "Image Title"/"Description" labels parsed to nothing and was
+// dropped without a word in the response. Now, if labelled parsing yields no
+// blocks, the raw paste is split on blank lines and each paragraph becomes an
+// unkeyed block. Text the user typed is never thrown away.
+const LABEL_LINE = /^\s*(?:Category|Reference\s*#|Body Site|Disease\/Condition|Tissue\/Fluid Type|Image Type|Color Mode|Contributor|Uploaded|File size|Dimensions|Color space|File type|Expiration date)\s*[:\t]/i;
+
+function blocksFromRawPaste(text) {
+  return text
+    .split(/\n\s*\n/)
+    .map((para) =>
+      para
+        .split('\n')
+        .filter((line) => !LABEL_LINE.test(line))
+        .join('\n')
+        .trim()
+    )
+    .filter(Boolean)
+    .map((description) => ({ category: '', title: '', description, fromRawPaste: true }));
+}
+
 function parseInfoBlocks(text) {
   const byRef = {};
   const unkeyed = [];
-  if (!text || !text.trim()) return { byRef, unkeyed };
+  if (!text || !text.trim()) return { byRef, unkeyed, rawPaste: 0 };
   const norm = text.replace(/\r/g, '').replace(/\t/g, ': ');
 
   const anchor = /(^|\n)(?=[^\n]*(?:Reference\s*#|Category\s*[:\t]))/gi;
@@ -81,8 +104,10 @@ function parseInfoBlocks(text) {
     : [norm];
 
   for (const b of chunks) {
-    const title = (b.match(/Image\s*Title\s*:?\s*(.+)/i) || [])[1]?.trim() || '';
-    const description = (b.match(/Description\s*:?\s*([\s\S]+?)(?=\n\s*(?:Body Site|Disease\/Condition|Tissue\/Fluid Type|Image Type|Color Mode|Contributor|Category|Reference\s*#|Uploaded|File size|Dimensions|Color space|File type|Expiration date)\s*[:\t]|$)/i) || [])[1]?.trim() || '';
+    // ACR labels these "Image Title" and "Description"; other sources write
+    // "Title" and "Caption". Accept all four rather than drop the block.
+    const title = (b.match(/(?:Image\s*)?Title\s*:?\s*(.+)/i) || [])[1]?.trim() || '';
+    const description = (b.match(/(?:Image\s*)?(?:Description|Caption)\s*:?\s*([\s\S]+?)(?=\n\s*(?:Body Site|Disease\/Condition|Tissue\/Fluid Type|Image Type|Color Mode|Contributor|Category|Reference\s*#|Uploaded|File size|Dimensions|Color space|File type|Expiration date)\s*[:\t]|$)/i) || [])[1]?.trim() || '';
     if (!title && !description) continue;
     const block = {
       category: (b.match(/Category\s*:?\s*(.+)/i) || [])[1]?.trim() || '',
@@ -99,7 +124,15 @@ function parseInfoBlocks(text) {
       unkeyed.push(block);
     }
   }
-  return { byRef, unkeyed };
+
+  // Nothing parsed, but the user pasted something. Treat the prose as captions
+  // rather than losing it.
+  if (!Object.keys(byRef).length && !unkeyed.length) {
+    const raw = blocksFromRawPaste(norm);
+    unkeyed.push(...raw);
+    return { byRef, unkeyed, rawPaste: raw.length };
+  }
+  return { byRef, unkeyed, rawPaste: 0 };
 }
 
 function mapCategory(acr) {
@@ -119,7 +152,17 @@ function mapCategory(acr) {
   if (s.includes('paget') || s.includes('osteoporos') || s.includes('parathyroid') ||
       s.includes('osteomalacia') || s.includes('rickets') || s.includes('osteopetrosis') ||
       s.includes('osteodystrophy')) return 'Metabolic bone';
+  // Last, so a category that mentions a tumour only in passing (brown tumour of
+  // hyperparathyroidism, tumoral calcinosis) is claimed by its own branch first.
+  if (s.includes('tumor') || s.includes('tumour') || s.includes('neoplas')) return 'Tumor-associated';
   return 'Other';
+}
+
+// Why a caption was paired by position rather than by reference number.
+function positionalNote(block) {
+  return block?.fromRawPaste
+    ? 'Caption taken from UNLABELLED pasted text and paired with this file by position. The paste carried no "Reference #" / "Image Title" / "Description" labels, so there was nothing to match on. Check the caption actually describes this image before publishing.'
+    : 'Caption matched BY PASTE ORDER, not by reference number: ACR gave no Reference # for this block, so it was paired with this file by position. Check the caption actually describes this image before publishing.';
 }
 
 async function findRecordId(key) {
@@ -177,7 +220,7 @@ export async function POST(request) {
 
   const files = form.getAll('files').filter((f) => f && typeof f.arrayBuffer === 'function');
   if (!files.length) return Response.json({ error: 'No files received.' }, { status: 400 });
-  const { byRef: infoByRef, unkeyed } = parseInfoBlocks(form.get('info') || '');
+  const { byRef: infoByRef, unkeyed, rawPaste } = parseInfoBlocks(form.get('info') || '');
   const unkeyedQueue = [...unkeyed];
   const positional = [];
   const notes = (form.get('notes') || '').trim();
@@ -230,7 +273,7 @@ export async function POST(request) {
           }),
           ...(byPosition ? {
             'Needs Review': true,
-            'Claude Question': `Caption matched BY PASTE ORDER, not by reference number: ACR gave no Reference # for this block, so it was paired with this file by position. Check the caption actually describes this image before publishing.`,
+            'Claude Question': positionalNote(block),
           } : {}),
           'Credit': 'Copyright 2026 ACR',
           'Published': false,
@@ -242,7 +285,7 @@ export async function POST(request) {
         if (notes) patch['Notes'] = notes;
         if (byPosition) {
           patch['Needs Review'] = true;
-          patch['Claude Question'] = `Caption matched BY PASTE ORDER, not by reference number: ACR gave no Reference # for this block, so it was paired with this file by position. Check the caption actually describes this image before publishing.`;
+          patch['Claude Question'] = positionalNote(block);
         }
         if (Object.keys(patch).length) await patchFields(recId, patch);
       }
@@ -292,6 +335,7 @@ export async function POST(request) {
     orphanBlocks,            // caption pasted, but no file matched it
     leftoverUnkeyed,         // reference-less blocks with no file left to pair
     matchedByPosition: positional,  // paired by paste order -- VERIFY THESE
+    rawPasteBlocks: rawPaste,       // >0 means the paste had no ACR labels and was read as prose
     duplicateKeys,           // skipped rather than overwrite a sibling image
     results,
   });
