@@ -7,10 +7,12 @@ const PREVIEW = process.env.NEXT_PUBLIC_SHOW_DRAFTS === 'true';
 // Quiz mode is live (7 Oct 2026).
 const QUIZ_ENABLED = true;
 
-// Only cards carrying a keyed answer and all four options can appear in a quiz,
-// so every count on this page is taken against the deck for the chosen style.
+// A card appears in a quiz only if "Question Live" is ticked (Ali has reviewed the
+// question) and it carries a keyed answer plus all four options. Every count on this
+// page is taken against the deck for the chosen style.
 function hasQuestion(c) {
   return Boolean(
+    c.questionLive &&
     c.correct && c.options && c.options.A && c.options.B && c.options.C && c.options.D
   );
 }
