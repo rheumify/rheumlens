@@ -11,8 +11,12 @@ export default function Home() {
           images — crystals under polarized light, rashes, radiographs, ultrasound, and more —
           reveal the finding, and train your eye. Built on the ACR Rheumatology Image Library.
         </p>
-        <div className="btn-row" style={{ justifyContent: 'center' }}>
+        <div
+          className="btn-row"
+          style={{ justifyContent: 'center', flexDirection: 'column', alignItems: 'center' }}
+        >
           <Link href="/study" className="btn">Flip cards →</Link>
+          <Link href="/study?style=quiz" className="btn secondary">Practice questions →</Link>
         </div>
       </section>
 
@@ -30,8 +34,8 @@ export default function Home() {
           <p>Practice anonymously — nothing required. Or sign in (optional) to save your progress across devices.</p>
         </div>
         <div className="feature">
-          <h3>Board-style questions coming soon</h3>
-          <p>Scored, image-based questions with distractors and explanations are on the way. Flip cards are live now.</p>
+          <h3>Board-style questions</h3>
+          <p>Image-based questions with distractors and a worked explanation for every option. Filter them the same way you filter the flip cards.</p>
         </div>
       </section>
     </div>
