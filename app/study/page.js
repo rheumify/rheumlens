@@ -36,6 +36,7 @@ export default function StudyHub() {
   const [stats, setStats] = useState(null);
   const [style, setStyle] = useState('flip');
   const [signedIn, setSignedIn] = useState(false);
+  const [favCount, setFavCount] = useState(null);
   const [seenIds, setSeenIds] = useState([]);
   const [sel, setSel] = useState({ category: [], imageType: [], joint: [] });
 
@@ -53,9 +54,14 @@ export default function StudyHub() {
       .then((r) => r.json())
       .then((d) => { setCards(d.questions || []); if (d.error) setError(d.error); })
       .catch((e) => setError(e.message));
+    // Favorites live on the account, not in this browser, so the badge has to
+    // come from the server rather than from the local stats.
     fetch('/api/progress')
       .then((r) => r.json())
-      .then((d) => setSignedIn(!!d.signedIn))
+      .then((d) => {
+        setSignedIn(!!d.signedIn);
+        setFavCount(d.signedIn ? (d.favorites || []).length : null);
+      })
       .catch(() => {});
     // Pull saved progress for a signed-in account and fold it into the local
     // store, so these counts describe the person rather than the browser.
@@ -178,6 +184,15 @@ export default function StudyHub() {
           ? 'Flip cards — see the image, reveal the finding, move on.'
           : 'Quiz — read the image and pick the answer.'}
       </p>
+      <p className="muted" style={{ margin: '6px 0 0', fontSize: '.85rem' }}>
+        <span aria-hidden="true" style={{
+          display: 'inline-block', width: 8, height: 8, borderRadius: 999, marginRight: 6,
+          background: signedIn ? '#2E7D53' : 'rgba(128,128,128,.55)', verticalAlign: 'middle',
+        }} />
+        {signedIn
+          ? 'Signed in — your progress is saved to your account and follows you between devices.'
+          : 'Signed out — your progress is saved in this browser only. Signing in is free and optional.'}
+      </p>
       {Toggle}
 
       {stats && (stats.streak > 0 || stats.seen > 0) && (
@@ -207,7 +222,7 @@ export default function StudyHub() {
           </Link>
           {signedIn ? (
             <Link href={q('mode=favorites')} className="choice">
-              <span>Favorites ★</span><span className="count-badge">{stats ? stats.favorites : '—'}</span>
+              <span>Favorites ★</span><span className="count-badge">{favCount === null ? '—' : favCount}</span>
             </Link>
           ) : (
             <span className="choice" style={{ opacity: 0.55, cursor: 'default' }}
@@ -216,11 +231,6 @@ export default function StudyHub() {
             </span>
           )}
         </div>
-        {!signedIn && (
-          <p className="muted" style={{ fontSize: '.82rem', margin: '10px 0 0' }}>
-            Your progress is saved in this browser. Sign in — it&apos;s free — to keep it across your devices.
-          </p>
-        )}
       </div>
 
       <div className="card" style={{ marginTop: 16 }}>
