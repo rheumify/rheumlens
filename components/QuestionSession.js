@@ -374,7 +374,6 @@ export default function QuestionSession({ mode = 'random', category = [], imageT
             {q.category && <span className="chip">{q.category}</span>}
             {q.imageType && <span className="chip">{q.imageType}</span>}
             {q.joint && <span className="chip">{q.joint}</span>}
-            {q.difficulty && <span className="chip">{q.difficulty}</span>}
           </div>
           {RelatedLinks}
           <div className="btn-row" style={{ marginTop: 16 }}>
