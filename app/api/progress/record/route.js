@@ -14,7 +14,11 @@ export const dynamic = 'force-dynamic';
 const HAS_CLERK =
   !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && !!process.env.CLERK_SECRET_KEY;
 
-const RESULTS = ['correct', 'missed', 'seen'];
+// 'quiz-correct' / 'quiz-missed' are the same grade as 'correct' / 'missed',
+// but recorded from question mode, where the learner picked A/B/C/D. Keeping
+// them distinct is what lets the practice page count question progress apart
+// from flip-card progress.
+const RESULTS = ['correct', 'missed', 'seen', 'quiz-correct', 'quiz-missed'];
 const SIGNED_OUT = { signedIn: false, rows: [], summary: null };
 
 // { userId, email } for the current session, or null when signed out / no Clerk.
