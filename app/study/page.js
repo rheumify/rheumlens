@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { getStats, getSeenIds, mergeServerRows } from '@/lib/progress';
+import { getStats, getSeenIds, getQuizAnsweredIds, mergeServerRows } from '@/lib/progress';
 
 const PREVIEW = process.env.NEXT_PUBLIC_SHOW_DRAFTS === 'true';
 // Quiz mode is live (7 Oct 2026).
@@ -38,6 +38,7 @@ export default function StudyHub() {
   const [signedIn, setSignedIn] = useState(false);
   const [favCount, setFavCount] = useState(null);
   const [seenIds, setSeenIds] = useState([]);
+  const [quizIds, setQuizIds] = useState([]);
   const [sel, setSel] = useState({ category: [], imageType: [], joint: [] });
 
   useEffect(() => {
@@ -48,6 +49,7 @@ export default function StudyHub() {
 
     setStats(getStats());
     setSeenIds(getSeenIds());
+    setQuizIds(getQuizAnsweredIds());
     const url = new URL('/api/questions', window.location.origin);
     if (PREVIEW) url.searchParams.set('preview', 'true');
     fetch(url)
@@ -69,7 +71,7 @@ export default function StudyHub() {
       .then((r) => r.json())
       .then((d) => { if (d.signedIn && d.rows) mergeServerRows(d.rows); })
       .catch(() => {})
-      .finally(() => { setStats(getStats()); setSeenIds(getSeenIds()); });
+      .finally(() => { setStats(getStats()); setSeenIds(getSeenIds()); setQuizIds(getQuizAnsweredIds()); });
   }, []);
 
   // The deck for the chosen style: flip can use the whole published library,
@@ -116,17 +118,21 @@ export default function StudyHub() {
   const total = deck.length;
 
   // Seen / left for BOTH decks, so the learner can see where they are in each
-  // without flipping the toggle. "Seen" is per image, not per style: an image
-  // met as a flip card counts as seen on the questions line too.
+  // without flipping the toggle. The two lines count different things on
+  // purpose: a flip card counts once the image has been met, a question counts
+  // only once they have actually answered it.
   const coverage = useMemo(() => {
     const list = cards || [];
-    const seen = new Set(seenIds);
-    const tally = (arr) => {
-      const s = arr.filter((c) => seen.has(c.questionId)).length;
-      return { seen: s, left: arr.length - s, total: arr.length };
+    const tally = (arr, ids) => {
+      const done = new Set(ids);
+      const d = arr.filter((c) => done.has(c.questionId)).length;
+      return { seen: d, left: arr.length - d, total: arr.length };
     };
-    return { flip: tally(list), quiz: tally(list.filter(hasQuestion)) };
-  }, [cards, seenIds]);
+    return {
+      flip: tally(list, seenIds),
+      quiz: tally(list.filter(hasQuestion), quizIds),
+    };
+  }, [cards, seenIds, quizIds]);
 
   // Split the published deck into images this learner has met and images they
   // haven't. Counted against the live deck, so cards added since their last
@@ -217,7 +223,7 @@ export default function StudyHub() {
             {coverage.flip.left > 0 && <>, {coverage.flip.left} to go</>}
           </div>
           <div>
-            <strong>Questions</strong> — {coverage.quiz.seen} of {coverage.quiz.total} seen
+            <strong>Questions</strong> — {coverage.quiz.seen} of {coverage.quiz.total} answered
             {coverage.quiz.left > 0 && <>, {coverage.quiz.left} to go</>}
           </div>
         </div>
