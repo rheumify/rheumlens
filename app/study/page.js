@@ -114,8 +114,19 @@ export default function StudyHub() {
 
   const anySel = sel.category.length + sel.imageType.length + sel.joint.length > 0;
   const total = deck.length;
-  // "N of M images seen" is about the library, not the current style's subset.
-  const libraryTotal = (cards || []).length;
+
+  // Seen / left for BOTH decks, so the learner can see where they are in each
+  // without flipping the toggle. "Seen" is per image, not per style: an image
+  // met as a flip card counts as seen on the questions line too.
+  const coverage = useMemo(() => {
+    const list = cards || [];
+    const seen = new Set(seenIds);
+    const tally = (arr) => {
+      const s = arr.filter((c) => seen.has(c.questionId)).length;
+      return { seen: s, left: arr.length - s, total: arr.length };
+    };
+    return { flip: tally(list), quiz: tally(list.filter(hasQuestion)) };
+  }, [cards, seenIds]);
 
   // Split the published deck into images this learner has met and images they
   // haven't. Counted against the live deck, so cards added since their last
@@ -195,12 +206,21 @@ export default function StudyHub() {
       </p>
       {Toggle}
 
-      {stats && (stats.streak > 0 || stats.seen > 0) && (
-        <p className="muted" style={{ marginTop: 10 }}>
-          {stats.streak > 0 && <>🔥 {stats.streak}-day streak</>}
-          {stats.streak > 0 && stats.seen > 0 && ' · '}
-          {stats.seen > 0 && libraryTotal > 0 && <>{stats.seen} of {libraryTotal} images seen</>}
-        </p>
+      {stats && stats.streak > 0 && (
+        <p className="muted" style={{ margin: '10px 0 0' }}>🔥 {stats.streak}-day streak</p>
+      )}
+
+      {cards && (
+        <div className="muted" style={{ marginTop: 8, fontSize: '.88rem', lineHeight: 1.6 }}>
+          <div>
+            <strong>Flip cards</strong> — {coverage.flip.seen} of {coverage.flip.total} seen
+            {coverage.flip.left > 0 && <>, {coverage.flip.left} to go</>}
+          </div>
+          <div>
+            <strong>Questions</strong> — {coverage.quiz.seen} of {coverage.quiz.total} seen
+            {coverage.quiz.left > 0 && <>, {coverage.quiz.left} to go</>}
+          </div>
+        </div>
       )}
 
       {error && <div className="banner-error" style={{ marginTop: 12 }}>Couldn’t load cards: {error}</div>}
